@@ -5,7 +5,9 @@ sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/ssh
 ssh-keygen -A
 /usr/sbin/sshd
 
-# Zabbix Agent2 (в фоне)
+# Zabbix Agent2
+mkdir -p /run/zabbix
+chown -R zabbix:zabbix /run/zabbix
 (/usr/sbin/zabbix_agent2 -f -c /etc/zabbix/zabbix_agent2.conf &) >/dev/null 2>&1
 
 # Nginx в фоне
