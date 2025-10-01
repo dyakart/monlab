@@ -2,6 +2,7 @@ FROM debian:12-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     nginx openssh-server curl iputils-ping ca-certificates sudo tini gnupg \
+    rsyslog rsyslog-relp rsyslog-gnutls \
  && rm -rf /var/lib/apt/lists/*
 
 # пользователь для SSH
@@ -26,6 +27,9 @@ RUN sed -i 's/^#\?Server=.*/Server=zabbix-server/' /etc/zabbix/zabbix_agent2.con
     sed -i 's/^#\?ListenPort=.*/ListenPort=10050/' /etc/zabbix/zabbix_agent2.conf
 
 COPY start.sh /start.sh
+# Конфиг Rsyslog
+COPY 20-relp-client.conf /etc/rsyslog.d/20-relp-client.conf
+
 RUN chmod +x /start.sh
 
 EXPOSE 22 80 10050

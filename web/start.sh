@@ -10,5 +10,9 @@ mkdir -p /run/zabbix
 chown -R zabbix:zabbix /run/zabbix
 (/usr/sbin/zabbix_agent2 -f -c /etc/zabbix/zabbix_agent2.conf &) >/dev/null 2>&1
 
+# rsyslog
+mkdir -p /var/spool/rsyslog /etc/rsyslog/certs
+rsyslogd
+
 # Nginx в фоне
 exec nginx -g 'daemon off;'

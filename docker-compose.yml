@@ -63,7 +63,24 @@ services:
     restart: unless-stopped
     networks: [labnet]
 
-  # Веб-узлы с Nginx + Zabbix Agent2
+  # Центральный сервер логов через rsyslog (RELP+TLS)
+  log-srv:
+    build: ./rsyslog
+    container_name: log-srv
+    hostname: log-srv
+    ports:
+      - "6514:6514"
+    volumes:
+      - rsyslog-logs:/var/log/remote
+      - ./rsyslog/certs/ca/ca.crt:/etc/rsyslog/certs/ca.crt:ro
+      - ./rsyslog/certs/server/log-srv.crt:/etc/rsyslog/certs/log-srv.crt:ro
+      - ./rsyslog/certs/server/log-srv.key:/etc/rsyslog/certs/log-srv.key:ro
+    restart: unless-stopped
+    networks:
+      labnet:
+        ipv4_address: 172.30.0.8
+
+  # Веб-серверы с Nginx + Zabbix Agent2 + rsyslog client
   webserver1:
     build: ./web
     image: lab/webserver:latest
@@ -74,6 +91,10 @@ services:
         ipv4_address: 172.30.0.11
     ports:
       - "8081:80"
+    volumes:
+      - ./rsyslog/certs/ca/ca.crt:/etc/rsyslog/certs/ca.crt:ro
+      - ./rsyslog/certs/web1/client.crt:/etc/rsyslog/certs/client.crt:ro
+      - ./rsyslog/certs/web1/client.key:/etc/rsyslog/certs/client.key:ro
     restart: unless-stopped
 
   webserver2:
@@ -86,6 +107,10 @@ services:
         ipv4_address: 172.30.0.12
     ports:
       - "8082:80"
+    volumes:
+      - ./rsyslog/certs/ca/ca.crt:/etc/rsyslog/certs/ca.crt:ro
+      - ./rsyslog/certs/web2/client.crt:/etc/rsyslog/certs/client.crt:ro
+      - ./rsyslog/certs/web2/client.key:/etc/rsyslog/certs/client.key:ro
     restart: unless-stopped
 
   # Splunk
@@ -136,3 +161,4 @@ volumes:
   zbx-pgdata:
   splunk-var:
   splunk-etc:
+  rsyslog-logs:
