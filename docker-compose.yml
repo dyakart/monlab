@@ -6,6 +6,18 @@ networks:
         - subnet: 172.30.0.0/24
 
 services:
+  # Запускаем сервис для создания TSL-сертификатов для каждого хоста
+  certs-init:
+    image: alpine:3.20
+    container_name: certs-init
+    working_dir: /work/rsyslog/certs
+    command: ["/bin/sh","-c","apk add --no-cache openssl bash >/dev/null 2>&1 && chmod +x ./make-certs.sh && ./make-certs.sh"]
+    volumes:
+      - ./rsyslog/certs:/work/rsyslog/certs
+    restart: "no"
+    mem_limit: 64m
+    cpus: "0.05"
+
   # Zabbix
   db:
     image: postgres:16-alpine
@@ -26,6 +38,8 @@ services:
     networks:
       labnet:
         ipv4_address: 172.30.0.5
+    mem_limit: 1g
+    cpus: "0.40"
 
   zabbix-server:
     image: zabbix/zabbix-server-pgsql:alpine-7.0-latest
@@ -45,6 +59,8 @@ services:
     networks:
       labnet:
         ipv4_address: 172.30.0.6
+    mem_limit: 768m
+    cpus: "0.5"
 
   zabbix-web:
     image: zabbix/zabbix-web-nginx-pgsql:alpine-7.0-latest
@@ -62,9 +78,14 @@ services:
       - "8080:8080"
     restart: unless-stopped
     networks: [labnet]
+    mem_limit: 1g
+    cpus: "0.5"
 
   # Центральный сервер логов через rsyslog (RELP+TLS)
   log-srv:
+    depends_on:
+      certs-init:
+        condition: service_completed_successfully
     build: ./rsyslog
     container_name: log-srv
     hostname: log-srv
@@ -79,9 +100,14 @@ services:
     networks:
       labnet:
         ipv4_address: 172.30.0.8
+    mem_limit: 256m
+    cpus: "0.20"
 
   # Веб-серверы с Nginx + Zabbix Agent2 + rsyslog client
   webserver1:
+    depends_on:
+      certs-init:
+        condition: service_completed_successfully
     build: ./web
     image: lab/webserver:latest
     container_name: webserver1
@@ -96,8 +122,13 @@ services:
       - ./rsyslog/certs/web1/client.crt:/etc/rsyslog/certs/client.crt:ro
       - ./rsyslog/certs/web1/client.key:/etc/rsyslog/certs/client.key:ro
     restart: unless-stopped
+    mem_limit: 224m
+    cpus: "0.15"
 
   webserver2:
+    depends_on:
+      certs-init:
+        condition: service_completed_successfully
     build: ./web
     image: lab/webserver:latest
     container_name: webserver2
@@ -112,6 +143,8 @@ services:
       - ./rsyslog/certs/web2/client.crt:/etc/rsyslog/certs/client.crt:ro
       - ./rsyslog/certs/web2/client.key:/etc/rsyslog/certs/client.key:ro
     restart: unless-stopped
+    mem_limit: 224m
+    cpus: "0.15"
 
   # Splunk
   splunk:
@@ -132,6 +165,8 @@ services:
     networks:
       labnet:
         ipv4_address: 172.30.0.7
+    mem_limit: 2560m
+    cpus: "1.00"
 
   uf-web1:
     build: ./uf
@@ -144,6 +179,8 @@ services:
     networks:
       labnet:
         ipv4_address: 172.30.0.21
+    mem_limit: 128m
+    cpus: "0.10"
 
   uf-web2:
     build: ./uf
@@ -156,6 +193,8 @@ services:
     networks:
       labnet:
         ipv4_address: 172.30.0.22
+    mem_limit: 128m
+    cpus: "0.10"
 
 volumes:
   zbx-pgdata:

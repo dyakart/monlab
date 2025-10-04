@@ -1,0 +1,61 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+.venv/
+env/
+.env
+
+# IDE / editor folders
+.idea/
+.vscode/
+*.sublime-project
+*.sublime-workspace
+
+# SQLite / databases
+*.sqlite3
+*.sqlite
+*.db
+
+# Logs and reports
+*.log
+*.out
+*.err
+coverage.xml
+htmlcov/
+*.cover
+*.py,cover
+
+# Operating system files
+.DS_Store
+Thumbs.db
+
+
+# certs
+rsyslog/certs/ca
+rsyslog/certs/server
+rsyslog/certs/web1
+rsyslog/certs/web2
