@@ -3,6 +3,12 @@ set -e
 cd "$(dirname "$0")"
 mkdir -p ca server web1 web2
 
+# Если уже есть и не просили FORCE=1 — просто выходим
+if [ -z "$FORCE" ] && [ -f ca/ca.crt ] && [ -f server/log-srv.crt ] && [ -f web1/client.crt ] && [ -f web2/client.crt ]; then
+  echo "[certs] already exist, skipping (set FORCE=1 to regenerate)"
+  exit 0
+fi
+
 # CA
 openssl genrsa -out ca/ca.key 4096
 openssl req -x509 -new -nodes -key ca/ca.key -sha256 -days 3650 \
