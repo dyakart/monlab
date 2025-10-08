@@ -148,7 +148,7 @@ services:
 
   # Splunk
   splunk:
-    image: splunk/splunk:latest
+    build: ./splunk
     container_name: splunk
     environment:
       SPLUNK_GENERAL_TERMS: --accept-sgt-current-at-splunk-com
@@ -160,7 +160,6 @@ services:
       - "9997:9997"
     volumes:
       - splunk-var:/opt/splunk/var
-      - splunk-etc:/opt/splunk/etc
     restart: unless-stopped
     networks:
       labnet:

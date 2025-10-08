@@ -1,0 +1,47 @@
+<dashboard version="1.1" theme="dark">
+  <label>Отслеживание метрик веб-серверов 1/2</label>
+  <row>
+    <panel>
+      <chart>
+        <title>График использования CPU, %</title>
+        <search>
+          <query>index=osmetrics sourcetype=os_metrics earliest=-30m
+| bin _time span=1m
+| stats avg(cpu_percent) AS "CPU, %" BY _time host
+| eval t=strftime(_time+10800,"%H:%M")
+| xyseries t host "CPU, %"</query>
+          <earliest>-24h@h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="charting.axisLabelsX.majorLabelStyle.rotation">-90</option>
+        <option name="charting.axisLabelsY.majorUnit">2</option>
+        <option name="charting.axisTitleX.text">Время, мск</option>
+        <option name="charting.axisTitleY.text">CPU, %</option>
+        <option name="charting.chart">line</option>
+        <option name="charting.drilldown">none</option>
+      </chart>
+    </panel>
+  </row>
+  <row>
+    <panel>
+      <chart>
+        <title>График свободной RAM, МБ</title>
+        <search>
+          <query>index=osmetrics sourcetype=os_metrics earliest=-30m
+| bin _time span=1m
+| stats avg(mem_free_mb) AS "Свободно, МБ" BY _time host
+| eval t=strftime(_time+10800,"%H:%M")
+| xyseries t host "Свободно, МБ"</query>
+          <earliest>-24h@h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="charting.axisLabelsX.majorLabelStyle.rotation">-90</option>
+        <option name="charting.axisLabelsY.majorUnit">50</option>
+        <option name="charting.axisTitleX.text">Время, мск</option>
+        <option name="charting.axisTitleY.text">свободно RAM, МБ</option>
+        <option name="charting.chart">line</option>
+        <option name="charting.drilldown">none</option>
+      </chart>
+    </panel>
+  </row>
+</dashboard>
