@@ -108,6 +108,8 @@ services:
     depends_on:
       certs-init:
         condition: service_completed_successfully
+      splunk:
+        condition: service_healthy
     build: ./web
     image: lab/webserver:latest
     container_name: webserver1
@@ -122,9 +124,6 @@ services:
       - ./rsyslog/certs/web1/client.crt:/etc/rsyslog/certs/client.crt:ro
       - ./rsyslog/certs/web1/client.key:/etc/rsyslog/certs/client.key:ro
       - webserver1-logs:/var/log
-    depends_on:
-      splunk:
-        condition: service_healthy
     restart: unless-stopped
     mem_limit: 224m
     cpus: "0.15"
@@ -133,6 +132,9 @@ services:
     depends_on:
       certs-init:
         condition: service_completed_successfully
+    depends_on:
+      splunk:
+        condition: service_healthy
     build: ./web
     image: lab/webserver:latest
     container_name: webserver2
@@ -148,9 +150,6 @@ services:
       - ./rsyslog/certs/web2/client.key:/etc/rsyslog/certs/client.key:ro
       - webserver2-logs:/var/log
     restart: unless-stopped
-    depends_on:
-      splunk:
-        condition: service_healthy
     mem_limit: 224m
     cpus: "0.15"
 
