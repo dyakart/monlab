@@ -4,3 +4,4 @@ FROM splunk/splunk:latest
 # сразу выставляем владельца splunk:splunk
 COPY --chown=splunk:splunk system/local /opt/splunk/etc/system/local
 COPY --chown=splunk:splunk apps/osmetrics_base /opt/splunk/etc/apps/osmetrics_base
+COPY --chown=splunk:splunk apps/logger_base /opt/splunk/etc/apps/logger_base
