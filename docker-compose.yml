@@ -132,7 +132,6 @@ services:
     depends_on:
       certs-init:
         condition: service_completed_successfully
-    depends_on:
       splunk:
         condition: service_healthy
     build: ./web
@@ -186,18 +185,16 @@ services:
     container_name: uf-web1
     hostname: webserver1
     depends_on:
-      - splunk
+      splunk:
+        condition: service_healthy
+      webserver1:
+        condition: service_started
     restart: unless-stopped
     volumes:
       - webserver1-logs:/var/log:ro
     networks:
       labnet:
         ipv4_address: 172.30.0.21
-    depends_on:
-      splunk:
-        condition: service_healthy
-      webserver1:
-        condition: service_started
     mem_limit: 1024m
     cpus: "1.00"
 
@@ -207,18 +204,16 @@ services:
     container_name: uf-web2
     hostname: webserver2
     depends_on:
-      - splunk
+      splunk:
+        condition: service_healthy
+      webserver1:
+        condition: service_started
     restart: unless-stopped
     volumes:
       - webserver2-logs:/var/log:ro
     networks:
       labnet:
         ipv4_address: 172.30.0.22
-    depends_on:
-      splunk:
-        condition: service_healthy
-      webserver1:
-        condition: service_started
     mem_limit: 1024m
     cpus: "1.00"
 
