@@ -191,12 +191,13 @@ services:
         condition: service_started
     restart: unless-stopped
     volumes:
-      - webserver1-logs:/var/log:ro
+      - webserver1-logs:/host/logs:ro
     networks:
       labnet:
         ipv4_address: 172.30.0.21
     mem_limit: 1024m
     cpus: "1.00"
+    user: "0"
 
   uf-web2:
     build: ./uf
@@ -210,12 +211,13 @@ services:
         condition: service_started
     restart: unless-stopped
     volumes:
-      - webserver2-logs:/var/log:ro
+      - webserver2-logs:/host/logs:ro
     networks:
       labnet:
         ipv4_address: 172.30.0.22
     mem_limit: 1024m
     cpus: "1.00"
+    user: "0"
 
 volumes:
   zbx-pgdata:
