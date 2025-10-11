@@ -194,6 +194,38 @@ services:
     mem_limit: 1024m
     cpus: "1.00"
 
+  monitoring-plugins:
+    build: ./plugins
+    container_name: monitoring-plugins
+    hostname: monitoring-plugins
+    networks:
+      labnet:
+        ipv4_address: 172.30.0.30
+    volumes:
+      - ./plugins:/usr/lib/zabbix/externalscripts:ro
+    restart: unless-stopped
+    mem_limit: 128m
+    cpus: "0.10"
+
+  # Zabbix Agent2 с external scripts
+  zbx-agent-plugins:
+    build:
+      context: ./zabbix-agent
+      dockerfile: Dockerfile
+    container_name: zbx-agent-plugins
+    hostname: monitoring-plugins
+    depends_on:
+      - zabbix-server
+    volumes:
+      - ./zabbix-agent/external_scripts.conf:/etc/zabbix/zabbix_agent2.d/external_scripts.conf:ro
+      - ./plugins:/usr/lib/zabbix/externalscripts:ro
+    restart: unless-stopped
+    networks:
+      labnet:
+        ipv4_address: 172.30.0.31
+    mem_limit: 128m
+    cpus: "0.10"
+
 volumes:
   zbx-pgdata:
   splunk-var:
