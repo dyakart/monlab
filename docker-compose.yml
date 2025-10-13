@@ -121,6 +121,7 @@ services:
       - ./rsyslog/certs/ca/ca.crt:/etc/rsyslog/certs/ca.crt:ro
       - ./rsyslog/certs/web1/client.crt:/etc/rsyslog/certs/client.crt:ro
       - ./rsyslog/certs/web1/client.key:/etc/rsyslog/certs/client.key:ro
+      - web1-varlog:/var/log
     restart: unless-stopped
     mem_limit: 224m
     cpus: "0.15"
@@ -142,13 +143,14 @@ services:
       - ./rsyslog/certs/ca/ca.crt:/etc/rsyslog/certs/ca.crt:ro
       - ./rsyslog/certs/web2/client.crt:/etc/rsyslog/certs/client.crt:ro
       - ./rsyslog/certs/web2/client.key:/etc/rsyslog/certs/client.key:ro
+      - web2-varlog:/var/log
     restart: unless-stopped
     mem_limit: 224m
     cpus: "0.15"
 
   # Splunk
   splunk:
-    build: ./splunk
+    image: splunk/splunk:latest
     container_name: splunk
     environment:
       SPLUNK_GENERAL_TERMS: --accept-sgt-current-at-splunk-com
@@ -160,43 +162,63 @@ services:
       - "9997:9997"
     volumes:
       - splunk-var:/opt/splunk/var
+      - ./splunk/system/local:/opt/splunk/etc/system/local
+      - ./splunk/apps/osmetrics_base:/opt/splunk/etc/apps/osmetrics_base
+      - ./splunk/apps/oslogs_base:/opt/splunk/etc/apps/oslogs_base
     restart: unless-stopped
     networks:
       labnet:
         ipv4_address: 172.30.0.7
-    mem_limit: 2560m
-    cpus: "1.00"
+    mem_limit: 3560m
+    cpus: "2.00"
 
   uf-web1:
-    build: ./uf
-    image: lab/uf:latest
+    image: splunk/universalforwarder:latest
     container_name: uf-web1
     hostname: webserver1
     depends_on:
       - splunk
+    volumes:
+      - web1-varlog:/hostlogs:ro
+      - ./uf/system/local:/opt/splunkforwarder/etc/system/local
+      - ./uf/apps/ta_osmetrics:/opt/splunkforwarder/etc/apps/ta_osmetrics
+      - ./uf/apps/ta_weblogs:/opt/splunkforwarder/etc/apps/ta_weblogs
+    environment:
+      SPLUNK_GENERAL_TERMS: --accept-sgt-current-at-splunk-com
+      SPLUNK_START_ARGS: --accept-license
+      SPLUNK_PASSWORD: Uf!Pass123
     restart: unless-stopped
     networks:
       labnet:
         ipv4_address: 172.30.0.21
-    mem_limit: 128m
-    cpus: "0.10"
+    mem_limit: 1g
+    cpus: "1.0"
 
   uf-web2:
-    build: ./uf
-    image: lab/uf:latest
+    image: splunk/universalforwarder:latest
     container_name: uf-web2
     hostname: webserver2
     depends_on:
       - splunk
+    volumes:
+      - web2-varlog:/hostlogs:ro
+      - ./uf/system/local:/opt/splunkforwarder/etc/system/local
+      - ./uf/apps/ta_osmetrics:/opt/splunkforwarder/etc/apps/ta_osmetrics
+      - ./uf/apps/ta_weblogs:/opt/splunkforwarder/etc/apps/ta_weblogs
+    environment:
+      SPLUNK_GENERAL_TERMS: --accept-sgt-current-at-splunk-com
+      SPLUNK_START_ARGS: --accept-license
+      SPLUNK_PASSWORD: Uf!Pass123
     restart: unless-stopped
     networks:
       labnet:
         ipv4_address: 172.30.0.22
-    mem_limit: 128m
-    cpus: "0.10"
+    mem_limit: 1g
+    cpus: "1.0"
 
 volumes:
   zbx-pgdata:
   splunk-var:
-  splunk-etc:
   rsyslog-logs:
+  web1-varlog:
+  web2-varlog:
