@@ -14,6 +14,11 @@ RUN curl -fsSL https://repo.zabbix.com/zabbix/7.0/debian/pool/main/z/zabbix-rele
  && apt-get update && apt-get install -y --no-install-recommends zabbix-agent2 \
  && rm -rf /var/lib/apt/lists/*
 
+# Создаем группу для доступа к логам
+RUN groupadd -r logreaders || true
+RUN usermod -a -G logreaders zabbix
+RUN usermod -a -G logreaders splunk || true
+
 # rsyslog конфиги
 COPY rsyslog.conf /etc/rsyslog.conf
 COPY 10-relp-tls.conf /etc/rsyslog.d/10-relp-tls.conf
