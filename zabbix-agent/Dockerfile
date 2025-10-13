@@ -9,6 +9,9 @@ RUN apk add --no-cache curl python3
 # Возвращаемся к пользователю zabbix
 USER zabbix
 
+# Отключаем автоматическую подготовку конфига
+ENV ZBX_PREPAREAGENTCONF=false
+
 # Копируем наш конфиг
 COPY zabbix_agent2.conf /etc/zabbix/zabbix_agent2.conf
 

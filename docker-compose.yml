@@ -217,8 +217,10 @@ services:
     depends_on:
       - zabbix-server
     volumes:
-      - ./zabbix-agent/external_scripts.conf:/etc/zabbix/zabbix_agent2.d/external_scripts.conf:ro
+      #- ./zabbix-agent/external_scripts.conf:/etc/zabbix/zabbix_agent2.d/external_scripts.conf:ro
       - ./plugins:/usr/lib/zabbix/externalscripts:ro
+    environment:
+      - ZBX_PREPAREAGENTCONF=false
     restart: unless-stopped
     networks:
       labnet:
