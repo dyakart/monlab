@@ -195,11 +195,9 @@ services:
     mem_limit: 1024m
     cpus: "1.00"
 
-  # Zabbix Agent2 с external scripts
+  # Zabbix Agent2 с external scripts без перезаписи конфига
   zbx-agent-plugins:
-    build:
-      context: ./zabbix-agent
-      dockerfile: Dockerfile
+    build: ./plugins
     container_name: zbx-agent-plugins
     hostname: monitoring-plugins
     depends_on:
@@ -207,8 +205,6 @@ services:
     volumes:
       - ./plugins:/usr/lib/zabbix/externalscripts:ro
       - rsyslog-logs:/var/log/remote:ro
-    environment:
-      - ZBX_PREPAREAGENTCONF=false
     restart: unless-stopped
     networks:
       labnet:
