@@ -8,7 +8,7 @@ API_URL = os.getenv("ZBX_API_URL", "http://zbx-web:8080/api_jsonrpc.php")  # п�
 ZBX_USER = os.getenv("ZBX_USER")
 ZBX_PASS = os.getenv("ZBX_PASS")
 
-WAIT_TIMEOUT  = int(os.getenv("WAIT_TIMEOUT", "600"))
+WAIT_TIMEOUT = int(os.getenv("WAIT_TIMEOUT", "600"))
 WAIT_INTERVAL = int(os.getenv("WAIT_INTERVAL", "5"))
 
 GROUP_NAME = "Linux servers"
@@ -19,6 +19,7 @@ HOSTS = [
     {"host": "webserver1", "dns": "webserver1", "port": "10050", "templates": [TEMPLATE_LINUX_AGENT]},
     {"host": "webserver2", "dns": "webserver2", "port": "10050", "templates": [TEMPLATE_LINUX_AGENT]},
     {"host": "log-srv", "dns": "log-srv", "port": "10050", "templates": []},
+    {"host": "monitoring-plugins", "dns": "monitoring-plugins", "port": "10050", "templates": []},
 ]
 
 # На хосте log-srv создаем элементы данных и триггеры для webserver1/2
@@ -42,6 +43,10 @@ LOG_ITEMS = [
 # Номера типов в Zabbix API
 ITEM_TYPE_ZABBIX_AGENT_ACTIVE = 7
 VALUE_TYPE_LOG = 2
+
+ITEM_TYPE_ZABBIX_AGENT = 0
+VALUE_TYPE_FLOAT = 0
+VALUE_TYPE_UINT = 3
 
 req_id = 0
 
@@ -240,8 +245,68 @@ def ensure_zabbix_server_health_only(token):
     print('Установлены шаблоны для хоста "Zabbix server": "Zabbix server health".')
 
 
+def get_agent_interface_id(token, hostid):
+    """Возвращает interfaceid агентского интерфейса хоста (type=1)."""
+    ifs = call_api("hostinterface.get", {"hostids": hostid}, token)
+    agent_if = next((i for i in ifs if int(i.get("type", 1)) == 1), None)
+    if not agent_if:
+        raise RuntimeError(f"No Zabbix agent interface on host {hostid}")
+    return agent_if["interfaceid"]
+
+
+def ensure_numeric_item(token, hostid, name, key_, value_type=VALUE_TYPE_UINT, delay="1m", timeout="10s"):
+    """Создаёт/обновляет числовой элемент данных (type=Zabbix agent) и возвращает itemid."""
+    iface_id = get_agent_interface_id(token, hostid)
+
+    r = call_api("item.get", {"hostids": hostid, "filter": {"key_": key_}}, token)
+    common = {
+        "name": name,
+        "key_": key_,
+        "type": ITEM_TYPE_ZABBIX_AGENT,
+        "value_type": value_type,
+        "delay": delay,
+        "timeout": timeout,
+        "history": "31d",
+        "trends": "90d",
+        "interfaceid": iface_id,
+    }
+
+    if r:
+        iid = r[0]["itemid"]
+        call_api("item.update", {"itemid": iid, **common}, token)
+        return iid
+    else:
+        res = call_api("item.create", {"hostid": hostid, **common}, token)
+        return res["itemids"][0]
+
+
+def provision_plugin_items(token):
+    """Создаёт элементы данных для контейнера 'monitoring-plugins' (проверка доступности HTTP (1/0) и размер логов в (MB))."""
+    host = get_host_by_name(token, "monitoring-plugins")
+    if not host:
+        raise RuntimeError('Хост "monitoring-plugins" не найден')
+    hid = host["hostid"]
+
+    # 1/0 — HTTP состояние
+    ensure_numeric_item(token, hid, "HTTP Check webserver1", 'check_http[webserver1]', VALUE_TYPE_UINT, "1m", "10s")
+    ensure_numeric_item(token, hid, "HTTP Check webserver2", 'check_http[webserver2]', VALUE_TYPE_UINT, "1m", "10s")
+
+    ensure_numeric_item(token, hid, "HTTP Check webserver1 by custom python plugin",
+                        'nginx.check[http,http://webserver1,]', VALUE_TYPE_UINT, "1m", "10s")
+    ensure_numeric_item(token, hid, "HTTP Check webserver2 by custom python plugin",
+                        'nginx.check[http,http://webserver2,]', VALUE_TYPE_UINT, "1m", "10s")
+
+    # MB — размер логов
+    ensure_numeric_item(token, hid, "Webserver1 Logs Size",
+                        'nginx.check[log_size,/var/log/remote/webserver1]', VALUE_TYPE_FLOAT, "5m", "10s")
+    ensure_numeric_item(token, hid, "Webserver2 Logs Size",
+                        'nginx.check[log_size,/var/log/remote/webserver2]', VALUE_TYPE_FLOAT, "5m", "10s")
+
+    print("Элементы данных для контейнера 'monitoring-plugins' для проверки доступности HTTP и размера логов успешно установлены!")
+
+
 def main():
-    """Основная функция для полной настройки Zabbix."""
+    """Основная функция запуска для полной настройки Zabbix."""
     wait_for_api(timeout=WAIT_TIMEOUT, interval=WAIT_INTERVAL)  # Ждём, когда API Zabbix будет доступен
 
     token = login(ZBX_USER, ZBX_PASS)
@@ -260,6 +325,9 @@ def main():
 
     # Для Zabbix server оставляем только шаблон "Zabbix server health"
     ensure_zabbix_server_health_only(token)
+
+    # Создаём элементы данных для контейнера с плагинами
+    provision_plugin_items(token)
 
     print("Готово! Zabbix успешно настроен!")
 

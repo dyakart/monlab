@@ -24,5 +24,7 @@ COPY zbx-active.conf /etc/zabbix/zabbix_agent2.d/zbx-active.conf
 COPY start.sh /start.sh
 RUN chmod +x /start.sh
 
+RUN groupadd -g 999 ping || true
+
 EXPOSE 6514/tcp 10050/tcp
 CMD ["/start.sh"]

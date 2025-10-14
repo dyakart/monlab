@@ -102,6 +102,23 @@ services:
     mem_limit: 500m
     cpus: "0.5"
 
+  zbx-agent-plugins:
+    build: ./plugins
+    container_name: zbx-agent-plugins
+    hostname: monitoring-plugins
+    depends_on:
+      - zabbix-server
+      - log-srv
+    volumes:
+      - ./plugins:/externalscripts-src:ro
+      - rsyslog-logs:/var/log/remote:ro
+    restart: unless-stopped
+    networks:
+      labnet:
+        ipv4_address: 172.30.0.31
+    mem_limit: 200m
+    cpus: "0.20"
+
   # Центральный сервер логов через rsyslog (RELP+TLS)
   log-srv:
     depends_on:
