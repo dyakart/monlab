@@ -5,7 +5,7 @@
       <chart>
         <title>График использования CPU, %</title>
         <search>
-          <query>index=osmetrics sourcetype=os_metrics earliest=-30m
+          <query>index=webmetrics sourcetype=os_metrics earliest=-30m
 | bin _time span=1m
 | stats avg(cpu_percent) AS "CPU, %" BY _time host
 | eval t=strftime(_time+10800,"%H:%M")
@@ -27,7 +27,7 @@
       <chart>
         <title>График свободной RAM, МБ</title>
         <search>
-          <query>index=osmetrics sourcetype=os_metrics earliest=-30m
+          <query>index=webmetrics sourcetype=os_metrics earliest=-30m
 | bin _time span=1m
 | stats avg(mem_free_mb) AS "Свободно, МБ" BY _time host
 | eval t=strftime(_time+10800,"%H:%M")

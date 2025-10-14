@@ -1,0 +1,163 @@
+<dashboard version="1.1" theme="dark">
+  <label>Обзор логов веб-серверов 1/2</label>
+  <init>
+    <set token="tz_off">10800</set>
+  </init>
+
+  <fieldset submitButton="false">
+    <input type="time" token="time_tok" searchWhenChanged="true">
+      <label>Время</label>
+      <default>
+        <earliest>-24h@h</earliest>
+        <latest>now</latest>
+      </default>
+    </input>
+    <input type="text" token="q" searchWhenChanged="true">
+      <label>Фильтр по сообщению</label>
+    </input>
+    <input type="dropdown" token="level" searchWhenChanged="true">
+      <label>Уровень</label>
+      <choice value="">Все</choice>
+      <choice value="DEBUG">DEBUG</choice>
+      <choice value="INFO">INFO</choice>
+      <choice value="NOTICE">NOTICE</choice>
+      <choice value="WARN|WARNING">WARN</choice>
+      <choice value="ERROR">ERROR</choice>
+      <choice value="CRIT|CRITICAL">CRITICAL</choice>
+    </input>
+  </fieldset>
+
+  <row>
+    <panel>
+      <chart>
+        <title>Количество логов по хостам</title>
+        <search>
+          <query><![CDATA[
+index=weblogs sourcetype=syslog
+| rex field=_raw "^\S+\s+(?<syslog_host>\S+)"
+| eval host_eff=coalesce(syslog_host, host)
+| search host_eff IN ("webserver1","webserver2")
+
+| where (len("$q$")=0 OR match(_raw,"(?i)($q$)"))
+  AND (len("$q$")>0 OR len("$level$")=0 OR match(_raw,"(?i)($level$)"))
+
+| eval t_msk=_time + $tz_off$
+| bin t_msk span=1m
+| eventstats min(t_msk) as first_bin
+| eval xlabel_full=strftime(t_msk,"%d:%m:%Y %H:%M")
+| eval xlabel_short=strftime(t_msk,"%H:%M")
+| eval xlabel=if(t_msk=first_bin, " " . xlabel_full, xlabel_short)
+| stats count by t_msk xlabel host_eff
+| sort 0 t_msk
+| fields - t_msk
+| xyseries xlabel host_eff count
+]]>
+          </query>
+          <earliest>$time_tok.earliest$</earliest>
+          <latest>$time_tok.latest$</latest>
+        </search>
+        <option name="charting.axisLabelsX.majorLabelStyle.rotation">-90</option>
+        <option name="charting.axisLabelsY.majorUnit">1</option>
+        <option name="charting.axisTitleX.text">Время, МСК</option>
+        <option name="charting.axisTitleY.text">Кол-во логов</option>
+        <option name="charting.axisY.scale">linear</option>
+        <option name="charting.chart">line</option>
+        <option name="charting.drilldown">none</option>
+      </chart>
+    </panel>
+
+    <panel>
+      <chart>
+        <title>Количество логов по уровням</title>
+        <search>
+          <query><![CDATA[
+index=weblogs sourcetype=syslog
+| rex field=_raw "^\S+\s+(?<syslog_host>\S+)"
+| eval host_eff=coalesce(syslog_host, host)
+| search host_eff IN ("webserver1","webserver2")
+| rex field=_raw "(?i)(?<level_ex>DEBUG|INFO|NOTICE|WARN(?:ING)?|ERR(?:OR)?|CRIT(?:ICAL)?)"
+| eval level_ex=upper(level_ex)
+
+| where (len("$q$")=0 OR match(_raw,"(?i)($q$)"))
+  AND (len("$q$")>0 OR len("$level$")=0 OR match(level_ex,"(?i)($level$)"))
+
+| eval t_msk=_time + $tz_off$
+| bin t_msk span=1m
+| eventstats min(t_msk) as first_bin
+| eval xlabel_full=strftime(t_msk,"%d:%m:%Y %H:%M")
+| eval xlabel_short=strftime(t_msk,"%H:%M")
+| eval xlabel=if(t_msk=first_bin, " " . xlabel_full, xlabel_short)
+| stats count by t_msk xlabel level_ex
+| sort 0 t_msk
+| fields - t_msk
+| xyseries xlabel level_ex count
+]]>
+          </query>
+          <earliest>$time_tok.earliest$</earliest>
+          <latest>$time_tok.latest$</latest>
+        </search>
+        <option name="charting.axisLabelsX.majorLabelStyle.rotation">-90</option>
+        <option name="charting.axisLabelsY.majorUnit">2</option>
+        <option name="charting.axisTitleX.text">Время, МСК</option>
+        <option name="charting.axisTitleY.text">Кол-во логов</option>
+        <option name="charting.chart">area</option>
+        <option name="charting.drilldown">none</option>
+      </chart>
+    </panel>
+  </row>
+
+  <row>
+    <panel>
+      <table>
+        <title>Топ хостов по количеству логов</title>
+        <search>
+          <query><![CDATA[
+index=weblogs sourcetype=syslog
+| rex field=_raw "^\S+\s+(?<syslog_host>\S+)"
+| eval host_eff=coalesce(syslog_host, host)
+| search host_eff IN ("webserver1","webserver2")
+
+| where (len("$q$")=0 OR match(_raw,"(?i)($q$)"))
+  AND (len("$q$")>0 OR len("$level$")=0 OR match(_raw,"(?i)($level$)"))
+
+| top limit=10 host_eff
+]]>
+          </query>
+          <earliest>$time_tok.earliest$</earliest>
+          <latest>$time_tok.latest$</latest>
+        </search>
+      </table>
+    </panel>
+  </row>
+
+  <row>
+    <panel>
+      <table>
+        <title>Последние события на веб-серверах</title>
+        <search>
+          <query><![CDATA[
+index=weblogs sourcetype=syslog
+| rex field=_raw "^\S+\s+(?<syslog_host>\S+)"
+| eval host_eff=coalesce(syslog_host, host)
+| search host_eff IN ("webserver1","webserver2")
+| rex field=_raw "(?i)(?<level_ex>DEBUG|INFO|NOTICE|WARN(?:ING)?|ERR(?:OR)?|CRIT(?:ICAL)?)"
+| eval level_ex=upper(level_ex)
+
+| where (len("$q$")=0 OR match(_raw,"(?i)($q$)"))
+  AND (len("$q$")>0 OR len("$level$")=0 OR match(level_ex,"(?i)($level$)"))
+
+| eval time_msk=strftime(_time + $tz_off$, "%d:%m:%Y %H:%M:%S")
+| rename host_eff as host level_ex as level
+| table time_msk host source level _raw
+| sort - time_msk
+| head 200
+]]>
+          </query>
+          <earliest>$time_tok.earliest$</earliest>
+          <latest>$time_tok.latest$</latest>
+        </search>
+        <option name="count">20</option>
+      </table>
+    </panel>
+  </row>
+</dashboard>

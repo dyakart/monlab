@@ -1,0 +1,3 @@
+<nav>
+  <view name="monitoring_webmetrics" label="Web Metrics" default="true"/>
+</nav>

@@ -1,0 +1,10 @@
+[]
+access = read : [ * ], write : [ admin ]
+export = app
+
+[views/monitoring_webmetrics]
+access = read : [ * ], write : [ admin ]
+export = app
+
+[nav/default]
+export = app

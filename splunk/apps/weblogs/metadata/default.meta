@@ -1,0 +1,10 @@
+[]
+access = read : [ * ], write : [ admin ]
+export = app
+
+[views/weblogs_overview]
+access = read : [ * ], write : [ admin ]
+export = app
+
+[nav/default]
+export = app
