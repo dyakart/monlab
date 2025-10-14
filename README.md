@@ -9,6 +9,7 @@
 ```bash
 git clone git@github.com:dyakart/monlab.git
 cd monlab
+docker compose up -d
 ```
 
 ---
