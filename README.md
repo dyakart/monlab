@@ -8,7 +8,15 @@
 
 ```bash
 git clone git@github.com:dyakart/monlab.git
+
 cd monlab
+
+cp example.env .env
+
+# Заполняем пустые значения и сохраняем
+nano .env
+
+# Запускаем
 docker compose up -d
 ```
 
