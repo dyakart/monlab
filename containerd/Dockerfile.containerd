@@ -1,0 +1,27 @@
+FROM zabbix/zabbix-agent2:alpine-7.0-latest
+
+USER root
+
+# Устанавливаем зависимости для плагинов
+RUN apk add --no-cache curl python3 py3-requests
+
+# Добавляем zabbix в группу ping для доступа к логам
+RUN adduser zabbix ping
+
+# Отключаем автоматическую подготовку конфига
+ENV ZBX_PREPAREAGENTCONF=false
+
+# Копируем наши скрипты внутрь образа
+COPY nginx_monitor.py /usr/lib/zabbix/externalscripts/
+COPY check_http.sh /usr/lib/zabbix/externalscripts/
+
+# Делаем скрипты исполняемыми
+RUN chmod +x /usr/lib/zabbix/externalscripts/*.sh
+
+# Копируем конфиги
+COPY zabbix_agent2.conf /etc/zabbix/zabbix_agent2.conf
+
+# Исправляем PID файл
+RUN sed -i 's|^PidFile=.*|PidFile=/tmp/zabbix_agent2.pid|' /etc/zabbix/zabbix_agent2.conf
+
+USER zabbix

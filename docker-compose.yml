@@ -16,7 +16,7 @@ services:
       - ./rsyslog/certs:/work/rsyslog/certs
     restart: "no"
     mem_limit: 64m
-    cpus: "0.05"
+    cpus: "0.5"
 
   # Zabbix
   db:
@@ -39,7 +39,7 @@ services:
       labnet:
         ipv4_address: 172.30.0.5
     mem_limit: 1g
-    cpus: "0.40"
+    cpus: "0.50"
 
   zabbix-server:
     image: zabbix/zabbix-server-pgsql:alpine-7.0-latest
@@ -60,7 +60,7 @@ services:
       labnet:
         ipv4_address: 172.30.0.6
     mem_limit: 768m
-    cpus: "0.5"
+    cpus: "1.5"
 
   zabbix-web:
     image: zabbix/zabbix-web-nginx-pgsql:alpine-7.0-latest
@@ -78,7 +78,7 @@ services:
     restart: unless-stopped
     networks: [labnet]
     mem_limit: 1g
-    cpus: "0.5"
+    cpus: "1.0"
 
   # Центральный сервер логов через rsyslog (RELP+TLS)
   log-srv:
@@ -164,8 +164,8 @@ services:
     networks:
       labnet:
         ipv4_address: 172.30.0.7
-    mem_limit: 2560m
-    cpus: "1.00"
+    mem_limit: 3560m
+    cpus: "2.00"
 
   uf-web1:
     build: ./uf

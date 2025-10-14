@@ -53,9 +53,11 @@ htmlcov/
 .DS_Store
 Thumbs.db
 
-
 # certs
 rsyslog/certs/ca
 rsyslog/certs/server
 rsyslog/certs/web1
 rsyslog/certs/web2
+
+# Archieves
+*.tar
