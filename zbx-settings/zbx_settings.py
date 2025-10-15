@@ -11,6 +11,9 @@ ZBX_PASS = os.getenv("ZBX_PASS")
 WAIT_TIMEOUT = int(os.getenv("WAIT_TIMEOUT", "600"))
 WAIT_INTERVAL = int(os.getenv("WAIT_INTERVAL", "5"))
 
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+
 GROUP_NAME = "Linux servers"
 TEMPLATE_LINUX_AGENT = "Linux by Zabbix agent"
 TEMPLATE_SERVER_HEALTH = "Zabbix server health"
@@ -53,13 +56,13 @@ req_id = 0
 
 def wait_for_api(timeout=600, interval=5):
     """Ждём, пока фронтенд Zabbix начнёт отвечать на apiinfo.version."""
-    print(f"Жду ответа от Zabbix API по адресу: {API_URL}")
+    print(f"⌛  Жду ответа от Zabbix API по адресу: {API_URL}")
     deadline = time.time() + timeout
     last_err = None
     while time.time() < deadline:
         try:
             v = call_api("apiinfo.version", {})
-            print(f"Успешное подключение к Zabbix API! Версия: {v}")
+            print(f"✅  Успешное подключение к Zabbix API! Версия: {v}")
             return
         except Exception as e:
             last_err = e
@@ -204,12 +207,16 @@ def ensure_trigger(token, description, expression, priority=3):
     r = call_api("trigger.get", {"filter": {"description": [description]}}, token)
     if r:
         tid = r[0]["triggerid"]
-        call_api("trigger.update", {"triggerid": tid, "expression": expression, "priority": priority}, token)
-        return tid
-    else:
-        res = call_api("trigger.create", {"description": description, "expression": expression, "priority": priority},
-                       token)
-        return res["triggerids"][0]
+        try:
+            call_api("trigger.update", {"triggerid": tid, "description": description,
+                                        "expression": expression, "priority": priority}, token)
+            return tid
+        except Exception as e:
+            # удалить и пересоздать — на случай «битых» старых выражений
+            call_api("trigger.delete", [tid], token)
+    res = call_api("trigger.create", {"description": description,
+                                      "expression": expression, "priority": priority}, token)
+    return res["triggerids"][0]
 
 
 def provision_logs_and_triggers(token):
@@ -222,7 +229,7 @@ def provision_logs_and_triggers(token):
         itemid = ensure_log_item(token, logsrv_id, it["name"], it["key_"], it["delay"])
         trig_id = ensure_trigger(token, it["trigger_name"], it["trigger_expr"], priority=3)
         print(
-            f"Элемент данных для логов создан/обновлён: {it['name']} (id={itemid})\nТриггер для логов создан/обновлён: {it['trigger_name']} (id={trig_id})")
+            f"✅  Элемент данных для логов создан/обновлён: {it['name']} (id={itemid})\n✅  Триггер для логов создан/обновлён: {it['trigger_name']} (id={trig_id})")
 
 
 def set_user_language(token, username, lang="ru_RU"):
@@ -242,7 +249,7 @@ def ensure_zabbix_server_health_only(token):
     zbx_hostid = zbx_host["hostid"]
     health_tid = get_template_ids(token, [TEMPLATE_SERVER_HEALTH])[0]
     set_templates_exact(token, zbx_hostid, [health_tid])
-    print('Установлены шаблоны для хоста "Zabbix server": "Zabbix server health".')
+    print('✅  Установлены шаблоны для хоста "Zabbix server": "Zabbix server health".')
 
 
 def get_agent_interface_id(token, hostid):
@@ -280,6 +287,308 @@ def ensure_numeric_item(token, hostid, name, key_, value_type=VALUE_TYPE_UINT, d
         return res["itemids"][0]
 
 
+def ensure_numeric_item_on_host(token, host_name, name, key_, value_type=VALUE_TYPE_FLOAT, delay="1m", timeout="10s"):
+    """Создаёт/обновляет числовой элемент данных на конкретном хосте."""
+    host = get_host_by_name(token, host_name)
+    if not host:
+        raise RuntimeError(f'Хост "{host_name}" не найден')
+    hostid = host["hostid"]
+
+    r = call_api("item.get", {"hostids": hostid, "filter": {"key_": key_}, "output": "extend"}, token)
+    if r:
+        it = r[0]
+        if it.get("templateid"):
+            return it["itemid"]
+
+        upd = {
+            "itemid": it["itemid"],
+            "name": name,
+            "delay": delay,
+            "timeout": timeout,
+        }
+        call_api("item.update", upd, token)
+        return it["itemid"]
+
+    iface_id = get_agent_interface_id(token, hostid)
+    create = {
+        "hostid": hostid,
+        "name": name,
+        "key_": key_,
+        "type": ITEM_TYPE_ZABBIX_AGENT,
+        "value_type": value_type,
+        "delay": delay,
+        "timeout": timeout,
+        "history": "31d",
+        "trends": "90d",
+        "interfaceid": iface_id,
+    }
+    res = call_api("item.create", create, token)
+    return res["itemids"][0]
+
+
+def ensure_required_items_for_hosts(token, hosts=("webserver1", "webserver2")):
+    """
+    Создаёт элементы данных для CPU и свободного места на /.
+    """
+    for h in hosts:
+        ensure_numeric_item_on_host(token, h, "CPU utilization, %", "system.cpu.util", VALUE_TYPE_FLOAT, "1m", "10s")
+        ensure_numeric_item_on_host(token, h, "Free space on /, %", "vfs.fs.size[/,pfree]", VALUE_TYPE_FLOAT, "1m",
+                                    "10s")
+
+
+def ensure_telegram_mediatype(token, name="Telegram (Webhook)"):
+    """
+    Создаёт/обновляет в Zabbix медиа-тип «Telegram (Webhook)».
+
+    Создаёт Webhook-медиа-тип (type=4) с готовым JavaScript-скриптом отправки сообщений
+    в Telegram Bot API (sendMessage). Если медиа-тип с таким именем уже существует —
+    обновляет его параметры (скрипт, таймаут, шаблоны сообщений и т.п.).
+
+    Параметры:
+        token (str): Zabbix API token/или auth-токен для вызова `call_api`.
+        name (str): Человекочитаемое имя медиа-типа в Zabbix. По умолчанию "Telegram (Webhook)".
+
+    Возвращает:
+        str: Идентификатор медиа-типа (mediatypeid).
+
+    Что настраивается:
+        - type=4 (Webhook), status=0 (включен), timeout="30s".
+        - parameters: `token`, `chat_id`, `Message`.
+        - script: JS-код с POST на `https://api.telegram.org/bot{token}/sendMessage`.
+        - message_templates: шаблоны для обычного события и восстановления.
+    """
+    mt = call_api("mediatype.get", {"filter": {"name": [name]}}, token)
+
+    script = r'''
+    try {
+      var p = {}; try { p = JSON.parse(typeof value === 'string' ? value : '{}'); } catch(e){}
+    
+      function pick(n){
+        if (typeof this[n] !== 'undefined' && this[n] !== null && String(this[n]).length) return String(this[n]);
+        if (p && typeof p[n] !== 'undefined' && p[n] !== null) return String(p[n]);
+        return '';
+      }
+      function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+      function rxEscape(s){ return s.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'); }
+      function fmtRuDate(d,t){ // d=YYYY.MM.DD
+        var m = d.match(/^(\d{4})\.(\d{2})\.(\d{2})$/);
+        return m ? (m[3]+'.'+m[2]+'.'+m[1]+' '+t) : (d+' '+t);
+      }
+    
+      var tgToken = pick.call(this,'token');
+      var chatId = pick.call(this,'chat_id');
+      var host = pick.call(this,'host');
+      var status = pick.call(this,'status');
+      var date = pick.call(this,'date');
+      var time = pick.call(this,'time');
+      var cur = pick.call(this,'value');
+      var tname = pick.call(this,'tname');
+      var link = pick.call(this,'link');
+    
+      if (!tgToken) throw 'No token';
+      if (!chatId)  throw 'No chat_id';
+    
+      if (cur && /[0-9]/.test(cur)) {
+        var m = cur.match(/([0-9]+(?:[.,][0-9]+)?)/);
+        if (m) cur = (Math.round(parseFloat(m[1].replace(',', '.'))*100)/100) + (/%/.test(cur) ? ' %' : '');
+      }
+    
+      var tshort = tname.replace(new RegExp('^'+rxEscape(host)+':\\s*'),'').trim();
+    
+      var thrSign = '', thrNum = '';
+      var thr = tname.match(/(>|<)\s*([0-9]+(?:[.,][0-9]+)?)\s*%/);
+      if (thr) { thrSign = thr[1]; thrNum = thr[2].replace(',', '.'); }
+      var thrText = (thrSign && thrNum) ? (thrSign + ' ' + thrNum + '%') : '';
+    
+      var isCpu  = /CPU/i.test(tname);
+      var isDisk = /(free space|pfree|disk|свободного места)/i.test(tname);
+    
+      var header, descr;
+      if (isCpu) {
+        header = (status === 'PROBLEM') ? '⚠️ Высокая загрузка процессора' : '✅ Высокая загрузка процессора устранена';
+        descr  = (status === 'PROBLEM')
+          ? 'На сервере ' + esc(host) + ' зафиксирована повышенная загрузка CPU.'
+          : 'Загрузка CPU вернулась в норму. Мониторинг продолжает наблюдение 👀';
+      } else if (isDisk) {
+        header = (status === 'PROBLEM') ? '⚠️ Мало свободного места на диске' : '✅ Диск снова в норме';
+        descr  = (status === 'PROBLEM')
+          ? 'Свободного места недостаточно. Проверьте крупные файлы/логи и очистите место.'
+          : 'Свободное место восстановлено. Мониторинг продолжает наблюдение 👀';
+      } else {
+        header = (status === 'PROBLEM') ? '⚠️ Событие' : '✅ Восстановление';
+        descr  = 'Мониторинг продолжает наблюдение 👀';
+      }
+    
+      var text =
+        header + '\n\n' +
+        'Сервер: <b>' + esc(host) + '</b>\n' +
+        'Событие: ' + esc(tshort) + '\n\n' +
+        '📅 Дата: ' + esc(fmtRuDate(date,time)) + '\n' +
+        (thrText ? ('🎯 Установленный порог: ' + esc(thrText) + '\n') : '') +
+        '📊 Текущее значение: ' + esc(cur || '-') +
+        (descr ? ('\n\n🧩 Описание:\n' + esc(descr)) : '');
+    
+      if (link) text += '\n\n🔗 ' + esc(link);
+    
+      var url = 'https://api.telegram.org/bot' + tgToken +
+                '/sendMessage?chat_id=' + encodeURIComponent(chatId) +
+                '&parse_mode=HTML' +
+                '&text=' + encodeURIComponent(text);
+    
+      var req = new HttpRequest();
+      var resp = req.get(url);
+      Zabbix.log(4, 'TG webhook GET status=' + req.getStatus() + ' resp=' + resp);
+      if (req.getStatus() !== 200) throw 'HTTP ' + req.getStatus() + ': ' + resp;
+    
+      return 'OK';
+    } catch (e) {
+      Zabbix.log(3, 'TG webhook error: ' + e);
+      throw e;
+    }
+    '''.strip()
+
+    params = [
+        {"name": "token", "value": (TELEGRAM_BOT_TOKEN or "")},
+        {"name": "chat_id", "value": "{ALERT.SENDTO}"},
+        {"name": "host", "value": "{HOST.NAME}"},
+        {"name": "severity", "value": "{EVENT.SEVERITY}"},
+        {"name": "status", "value": "{EVENT.STATUS}"},  # PROBLEM | RESOLVED
+        {"name": "date", "value": "{EVENT.DATE}"},
+        {"name": "time", "value": "{EVENT.TIME}"},
+        {"name": "value", "value": "{ITEM.LASTVALUE1}"},
+        {"name": "tname", "value": "{TRIGGER.NAME}"},
+        {"name": "link", "value": "{TRIGGER.URL}"},
+    ]
+
+    msg_templates = [
+        {"eventsource": 0, "recovery": 0, "subject": "{EVENT.NAME}", "message": "{ALERT.MESSAGE}"},
+        {"eventsource": 0, "recovery": 1, "subject": "RECOVERY: {EVENT.NAME}", "message": "{ALERT.MESSAGE}"},
+    ]
+
+    obj = {
+        "name": name,
+        "type": 4,  # Webhook
+        "status": 0,  # enabled
+        "parameters": params,
+        "script": script,
+        "message_templates": msg_templates,
+        "timeout": "30s"
+    }
+
+    if mt:
+        obj["mediatypeid"] = mt[0]["mediatypeid"]
+        call_api("mediatype.update", obj, token)
+        return obj["mediatypeid"]
+    else:
+        res = call_api("mediatype.create", obj, token)
+        return res["mediatypeids"][0]
+
+
+def ensure_user_media_telegram(token, userid, mediatypeid, chat_id):
+    """
+    Привязывает Telegram-медиа к пользователю Zabbix (создаёт или обновляет «User media»).
+
+    Если у пользователя уже есть запись медиа данного типа — обновляет её (chat_id, режим, период, уровни).
+    Иначе добавляет новую запись в профиль пользователя.
+
+    Параметры:
+        token (str): Zabbix API токен.
+        userid (str|int): Идентификатор пользователя Zabbix (userid).
+        mediatypeid (str|int): Идентификатор медиа-типа (Telegram Webhook).
+        chat_id (str): Целевой Telegram chat_id (куда слать уведомления).
+    """
+
+    usr = call_api("user.get", {"userids": [userid], "selectMedias": "extend"}, token)[0]
+    medias = usr.get("medias", [])
+    existing = next((m for m in medias if m["mediatypeid"] == str(mediatypeid)), None)
+    media_obj = {
+        "mediatypeid": mediatypeid,
+        "sendto": chat_id,
+        "active": 0,  # 0 - включено
+        "severity": 63,  # все уровни
+        "period": "1-7,00:00-24:00"
+    }
+    if existing:
+        call_api("user.update", {"userid": userid, "medias": [{
+            "mediaid": existing["mediaid"], **media_obj
+        }]}, token)
+    else:
+        call_api("user.update", {"userid": userid, "medias": [media_obj]}, token)
+
+
+def ensure_trigger_action_telegram(token, name, mediatypeid, userid, groupid):
+    """
+    Создаёт или обновляет Zabbix Action, отправляющее триггер-уведомления в Telegram.
+
+    Действие срабатывает для триггеров с уровнем «Warning» и выше. Отправляет сообщение пользователю через указанный
+    медиа-тип при проблеме.
+
+    Параметры:
+        token (str): Zabbix API токен.
+        name (str): Имя действия (Action) в Zabbix.
+        mediatypeid (str|int): Идентификатор медиа-типа (Telegram Webhook).
+        userid (str|int): Пользователь, которому отправлять уведомления.
+        groupid (str|int): Идентификатор группы хостов, по которой фильтровать события.
+
+    Возвращает:
+        str: Идентификатор действия (actionid).
+    """
+
+    # проверим, есть ли action с таким именем
+    cur = call_api("action.get", {"filter": {"name": [name]}}, token)
+    action = {
+        "name": name,
+        "eventsource": 0,  # Trigger actions
+        "status": 0,
+        "filter": {
+            "evaltype": 0,  # AND
+            "conditions": [
+                {"conditiontype": 0, "operator": 0, "value": str(groupid)},  # Host group = Linux servers
+                {"conditiontype": 4, "operator": 5, "value": "2"}  # Severity (уровень) >= Warning
+            ]
+        },
+        "operations": [{
+            "operationtype": 0,  # send message
+            "opmessage": {"default_msg": 1, "mediatypeid": mediatypeid},
+            "opmessage_usr": [{"userid": userid}]
+        }],
+        "recovery_operations": [{
+            "operationtype": 0,
+            "opmessage": {"default_msg": 1, "mediatypeid": mediatypeid},
+            "opmessage_usr": [{"userid": userid}]
+        }]
+    }
+    if cur:
+        action["actionid"] = cur[0]["actionid"]
+        call_api("action.update", action, token)
+        return action["actionid"]
+    else:
+        res = call_api("action.create", action, token)
+        return res["actionids"][0]
+
+
+def ensure_cpu_disk_triggers(token, hosts=("webserver1", "webserver2")):
+    """
+    Создаёт, если их нет базовые триггеры по CPU и свободному месту на корне для заданных хостов.
+
+    Для каждого хоста добавляет два триггера:
+      1) Высокая загрузка CPU: среднее за 5 минут > 85% (`system.cpu.util`).
+      2) Мало свободного места на `/`: доля свободного < 10% (`vfs.fs.size[/,pfree]`).
+
+    Параметры:
+        token (str): Zabbix API токен.
+        hosts (Iterable[str]): Имена хостов в Zabbix.
+    """
+    for h in hosts:
+        cpu_descr = f"{h}: High CPU utilization > 50%"
+        cpu_expr = f"avg(/{h}/system.cpu.util,1m)>50"
+        ensure_trigger(token, cpu_descr, cpu_expr, priority=4)
+
+        disk_descr = f"{h}: Low free space on / < 40%"
+        disk_expr = f"min(/{h}/vfs.fs.size[/,pfree],1m)<40"
+        ensure_trigger(token, disk_descr, disk_expr, priority=4)
+
+
 def provision_plugin_items(token):
     """Создаёт элементы данных для контейнера 'monitoring-plugins' (проверка доступности HTTP (1/0) и размер логов в (MB))."""
     host = get_host_by_name(token, "monitoring-plugins")
@@ -302,7 +611,8 @@ def provision_plugin_items(token):
     ensure_numeric_item(token, hid, "Webserver2 Logs Size",
                         'nginx.check[log_size,/var/log/remote/webserver2]', VALUE_TYPE_FLOAT, "5m", "10s")
 
-    print("Элементы данных для контейнера 'monitoring-plugins' для проверки доступности HTTP и размера логов успешно установлены!")
+    print(
+        "✅  Элементы данных для контейнера 'monitoring-plugins' для проверки доступности HTTP и размера логов успешно установлены!")
 
 
 def main():
@@ -318,7 +628,7 @@ def main():
     groupid = ensure_group(token, GROUP_NAME)
     for h in HOSTS:
         hid = ensure_host(token, groupid, h["host"], h["dns"], h["port"], h["templates"])
-        print(f"Хост создан/обновлён: {h['host']} (id={hid})")
+        print(f"✅  Хост создан/обновлён: {h['host']} (id={hid})")
 
     # Создаем элементы данных и триггеры для логов на хосте log-srv
     provision_logs_and_triggers(token)
@@ -329,7 +639,23 @@ def main():
     # Создаём элементы данных для контейнера с плагинами
     provision_plugin_items(token)
 
-    print("Готово! Zabbix успешно настроен!")
+    # Создаем элементы данных CPU и DISK на webserver1/2
+    ensure_required_items_for_hosts(token)
+
+    # Создаем триггеры на эти элементы данных CPU и DISK
+    ensure_cpu_disk_triggers(token)
+
+    if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
+        mtid = ensure_telegram_mediatype(token)
+        admin = call_api("user.get", {"filter": {"username": [ZBX_USER]}}, token)[0]
+        ensure_user_media_telegram(token, admin["userid"], mtid, TELEGRAM_CHAT_ID)
+        ensure_trigger_action_telegram(token, "Send problems to Telegram (Linux servers ≥ Warning)", mtid,
+                                       admin["userid"], groupid)
+        print("✅  Telegram (webhook) успешно установлен!")
+    else:
+        print("⚠️  Пропускаю настройку Telegram: не заданы TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID.")
+
+    print("✅  Готово! Zabbix успешно настроен!")
 
 
 if __name__ == "__main__":
