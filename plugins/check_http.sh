@@ -1,10 +1,18 @@
 #!/usr/bin/env bash
 # Наш кастомный плагин check_http
+# check_http.sh: 1 = OK, 0 = FAIL
+set -u
 
-set -e
-curl --connect-timeout 3 -s "http://$1" > /dev/null 2>&1
-if [ "$?" -ne "0" ]; then
-  echo "0"
+target="${1:-}"
+[ -z "$target" ] && { printf '0\n'; exit 0; }
+
+case "$target" in
+  http://*|https://*) url="$target" ;;
+  *) url="http://$target" ;;
+esac
+
+if curl -fs --connect-timeout 3 --max-time 4 -o /dev/null "$url" 2>/dev/null; then
+  printf '1\n'
 else
-  echo "1"
+  printf '0\n'
 fi
