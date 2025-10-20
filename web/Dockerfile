@@ -21,10 +21,8 @@ RUN curl -fsSL https://repo.zabbix.com/zabbix/7.0/debian/pool/main/z/zabbix-rele
 # контент сайта
 COPY site/ /usr/share/nginx/html/
 
-# Конфиг Zabbix Agent2
-RUN sed -i 's/^#\?Server=.*/Server=zabbix-server/' /etc/zabbix/zabbix_agent2.conf && \
-    sed -i 's/^#\?ServerActive=.*/ServerActive=zabbix-server/' /etc/zabbix/zabbix_agent2.conf && \
-    sed -i 's/^#\?ListenPort=.*/ListenPort=10050/' /etc/zabbix/zabbix_agent2.conf
+# Копируем кастомный конфиг Zabbix Agent2
+COPY zabbix_agent2.conf /etc/zabbix/zabbix_agent2.conf
 
 COPY start.sh /start.sh
 # Конфиг Rsyslog

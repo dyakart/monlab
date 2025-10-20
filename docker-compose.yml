@@ -55,6 +55,9 @@ services:
       TZ: ${TZ}
     ports:
       - "10051:10051"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:rw
+      - ./plugins:/usr/lib/zabbix/alertscripts:ro
     restart: unless-stopped
     networks:
       labnet:
@@ -68,6 +71,8 @@ services:
     depends_on:
       - zabbix-server
     environment:
+      ZBX_SERVER_HOST: zbx-server
+      ZBX_SERVER_PORT: 10051
       DB_SERVER_HOST: db
       POSTGRES_DB: ${POSTGRES_DB}
       POSTGRES_USER: ${POSTGRES_USER}
@@ -122,7 +127,7 @@ services:
       - ./rsyslog/certs/web1/client.key:/etc/rsyslog/certs/client.key:ro
     restart: unless-stopped
     mem_limit: 224m
-    cpus: "0.15"
+    cpus: "1.0"
 
   webserver2:
     depends_on:
