@@ -177,12 +177,17 @@ services:
     image: lab/uf:latest
     container_name: uf-web1
     hostname: webserver1
+    environment:
+      SPLUNK_PASSWORD: ${UF_PASSWORD}
+      SPLUNK_HOME_OWNERSHIP_ENFORCEMENT: "false"
     depends_on:
       - splunk
     restart: unless-stopped
     networks:
       labnet:
         ipv4_address: 172.30.0.21
+    volumes:
+      - rsyslog-logs:/web-logs:ro
     mem_limit: 1024m
     cpus: "1.00"
 
@@ -191,12 +196,17 @@ services:
     image: lab/uf:latest
     container_name: uf-web2
     hostname: webserver2
+    environment:
+      SPLUNK_PASSWORD: ${UF_PASSWORD}
+      SPLUNK_HOME_OWNERSHIP_ENFORCEMENT: "false"
     depends_on:
       - splunk
     restart: unless-stopped
     networks:
       labnet:
         ipv4_address: 172.30.0.22
+    volumes:
+      - rsyslog-logs:/web-logs:ro
     mem_limit: 1024m
     cpus: "1.00"
 
