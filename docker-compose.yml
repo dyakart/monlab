@@ -217,7 +217,72 @@ services:
     mem_limit: 128m
     cpus: "0.10"
 
+  # Новые веб-серверы
+  webserver3:
+    depends_on:
+      certs-init:
+        condition: service_completed_successfully
+    build: ./web
+    image: lab/webserver:latest
+    container_name: webserver3
+    hostname: webserver3
+    networks:
+      labnet:
+        ipv4_address: 172.30.0.13
+    ports:
+      - "8083:80"
+    volumes:
+      - ./rsyslog/certs/ca/ca.crt:/etc/rsyslog/certs/ca.crt:ro
+      - ./rsyslog/certs/web3/client.crt:/etc/rsyslog/certs/client.crt:ro
+      - ./rsyslog/certs/web3/client.key:/etc/rsyslog/certs/client.key:ro
+    restart: unless-stopped
+    mem_limit: 224m
+    cpus: "0.15"
+
+  webserver4:
+    depends_on:
+      certs-init:
+        condition: service_completed_successfully
+    build: ./web
+    image: lab/webserver:latest
+    container_name: webserver4
+    hostname: webserver4
+    networks:
+      labnet:
+        ipv4_address: 172.30.0.14
+    ports:
+      - "8084:80"
+    volumes:
+      - ./rsyslog/certs/ca/ca.crt:/etc/rsyslog/certs/ca.crt:ro
+      - ./rsyslog/certs/web4/client.crt:/etc/rsyslog/certs/client.crt:ro
+      - ./rsyslog/certs/web4/client.key:/etc/rsyslog/certs/client.key:ro
+    restart: unless-stopped
+    mem_limit: 224m
+    cpus: "0.15"
+
+  # Zabbix Proxy
+  zabbix-proxy:
+    image: zabbix/zabbix-proxy-sqlite3:alpine-7.0-latest
+    container_name: zbx-proxy
+    depends_on:
+      - zabbix-server
+    environment:
+      ZBX_HOSTNAME: zbx-proxy-1
+      ZBX_SERVER_HOST: zabbix-server
+      ZBX_PROXYMODE: 0  # активный режим
+      ZBX_CONFIGFREQUENCY: 60
+      ZBX_STARTREPORTWRITERS: 1
+    volumes:
+      - zbx-proxy-data:/var/lib/zabbix
+    restart: unless-stopped
+    networks:
+      labnet:
+        ipv4_address: 172.30.0.9
+    mem_limit: 256m
+    cpus: "0.5"
+
 volumes:
   zbx-pgdata:
   splunk-var:
   rsyslog-logs:
+  zbx-proxy-data:
