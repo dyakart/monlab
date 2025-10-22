@@ -35,9 +35,8 @@ COPY start.sh /start.sh
 # Конфиг Rsyslog
 COPY 20-relp-client.conf /etc/rsyslog.d/20-relp-client.conf
 
-# Копируем конфиг SNMP и выдаём права
+# Копируем шаблон будущего конфига SNMP
 COPY snmpd.conf.template /etc/snmp/snmpd.conf.template
-#RUN chown snmp:snmp /etc/snmp/snmpd.conf && chmod 600 /etc/snmp/snmpd.conf
 
 RUN chmod +x /start.sh
 
