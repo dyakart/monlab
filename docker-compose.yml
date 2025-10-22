@@ -107,7 +107,7 @@ services:
     mem_limit: 256m
     cpus: "0.20"
 
-  # Веб-серверы с Nginx + Zabbix Agent2 + rsyslog client
+  # Веб-серверы с Nginx + Zabbix Agent2 + rsyslog client + snmp
   webserver1:
     depends_on:
       certs-init:
@@ -116,11 +116,15 @@ services:
     image: lab/webserver:latest
     container_name: webserver1
     hostname: webserver1
+    environment:
+      SNMP_AUTH_PASS: ${SNMP_AUTH_PASS}
+      SNMP_PRIV_PASS: ${SNMP_PRIV_PASS}
     networks:
       labnet:
         ipv4_address: 172.30.0.11
     ports:
       - "8081:80"
+      - "11611:161/udp"
     volumes:
       - ./rsyslog/certs/ca/ca.crt:/etc/rsyslog/certs/ca.crt:ro
       - ./rsyslog/certs/web1/client.crt:/etc/rsyslog/certs/client.crt:ro
@@ -137,11 +141,15 @@ services:
     image: lab/webserver:latest
     container_name: webserver2
     hostname: webserver2
+    environment:
+      SNMP_AUTH_PASS: ${SNMP_AUTH_PASS}
+      SNMP_PRIV_PASS: ${SNMP_PRIV_PASS}
     networks:
       labnet:
         ipv4_address: 172.30.0.12
     ports:
       - "8082:80"
+      - "11612:161/udp"
     volumes:
       - ./rsyslog/certs/ca/ca.crt:/etc/rsyslog/certs/ca.crt:ro
       - ./rsyslog/certs/web2/client.crt:/etc/rsyslog/certs/client.crt:ro
@@ -236,11 +244,15 @@ services:
     image: lab/webserver:latest
     container_name: webserver3
     hostname: webserver3
+    environment:
+      SNMP_AUTH_PASS: ${SNMP_AUTH_PASS}
+      SNMP_PRIV_PASS: ${SNMP_PRIV_PASS}
     networks:
       labnet:
         ipv4_address: 172.30.0.13
     ports:
       - "8083:80"
+      - "11613:161/udp"
     volumes:
       - ./rsyslog/certs/ca/ca.crt:/etc/rsyslog/certs/ca.crt:ro
       - ./rsyslog/certs/web3/client.crt:/etc/rsyslog/certs/client.crt:ro
@@ -257,11 +269,15 @@ services:
     image: lab/webserver:latest
     container_name: webserver4
     hostname: webserver4
+    environment:
+      SNMP_AUTH_PASS: ${SNMP_AUTH_PASS}
+      SNMP_PRIV_PASS: ${SNMP_PRIV_PASS}
     networks:
       labnet:
         ipv4_address: 172.30.0.14
     ports:
       - "8084:80"
+      - "11614:161/udp"
     volumes:
       - ./rsyslog/certs/ca/ca.crt:/etc/rsyslog/certs/ca.crt:ro
       - ./rsyslog/certs/web4/client.crt:/etc/rsyslog/certs/client.crt:ro

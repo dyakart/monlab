@@ -1,0 +1,18 @@
+# SNMPv3 конфигурация
+# Создаем пользователя с SHA/AES (пароли из env переменных)
+createUser zabbix SHA "${SNMP_AUTH_PASS}" AES "${SNMP_PRIV_PASS}"
+
+# Права для пользователя
+rwuser zabbix authpriv
+
+# Системная информация
+sysLocation "Datacenter"
+sysContact "admin@company.com"
+sysName ${HOSTNAME}
+
+# Дисковая статистика
+disk / 10000
+
+# Процессы
+proc nginx
+proc sshd
