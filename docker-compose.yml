@@ -4,6 +4,11 @@ networks:
     ipam:
       config:
         - subnet: 172.30.0.0/24
+  labnet_secondary:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.30.1.0/24
 
 services:
   # Запускаем сервис для создания TLS-сертификатов для каждого хоста
@@ -122,6 +127,8 @@ services:
     networks:
       labnet:
         ipv4_address: 172.30.0.11
+      labnet_secondary:
+        ipv4_address: 172.30.1.11
     ports:
       - "8081:80"
       - "11611:161/udp"
@@ -130,8 +137,10 @@ services:
       - ./rsyslog/certs/web1/client.crt:/etc/rsyslog/certs/client.crt:ro
       - ./rsyslog/certs/web1/client.key:/etc/rsyslog/certs/client.key:ro
     restart: unless-stopped
-    mem_limit: 224m
-    cpus: "1.0"
+    mem_limit: 512m
+    cpus: "0.5"
+    cap_add:
+      - NET_ADMIN
 
   webserver2:
     depends_on:
@@ -155,8 +164,8 @@ services:
       - ./rsyslog/certs/web2/client.crt:/etc/rsyslog/certs/client.crt:ro
       - ./rsyslog/certs/web2/client.key:/etc/rsyslog/certs/client.key:ro
     restart: unless-stopped
-    mem_limit: 224m
-    cpus: "0.15"
+    mem_limit: 512m
+    cpus: "0.5"
 
   # Splunk
   splunk:
@@ -258,8 +267,8 @@ services:
       - ./rsyslog/certs/web3/client.crt:/etc/rsyslog/certs/client.crt:ro
       - ./rsyslog/certs/web3/client.key:/etc/rsyslog/certs/client.key:ro
     restart: unless-stopped
-    mem_limit: 224m
-    cpus: "0.15"
+    mem_limit: 512m
+    cpus: "0.5"
 
   webserver4:
     depends_on:
@@ -283,8 +292,8 @@ services:
       - ./rsyslog/certs/web4/client.crt:/etc/rsyslog/certs/client.crt:ro
       - ./rsyslog/certs/web4/client.key:/etc/rsyslog/certs/client.key:ro
     restart: unless-stopped
-    mem_limit: 224m
-    cpus: "0.15"
+    mem_limit: 512m
+    cpus: "0.5"
 
   # Zabbix Proxy
   zabbix-proxy:
@@ -298,14 +307,15 @@ services:
       ZBX_PROXYMODE: 0  # активный режим
       ZBX_CONFIGFREQUENCY: 60
       ZBX_STARTREPORTWRITERS: 1
+      ZBX_DATASENDERFREQUENCY: 5
     volumes:
       - zbx-proxy-data:/var/lib/zabbix
     restart: unless-stopped
     networks:
       labnet:
         ipv4_address: 172.30.0.9
-    mem_limit: 256m
-    cpus: "0.5"
+    mem_limit: 1024m
+    cpus: "1.5"
 
 volumes:
   zbx-pgdata:
