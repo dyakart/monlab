@@ -96,6 +96,7 @@ services:
       - zabbix-web
       - zabbix-server
     environment:
+      PYTHONUNBUFFERED: 1
       ZBX_API_URL: ${ZBX_API_URL}
       ZBX_USER: ${ZBX_USER}
       ZBX_PASS: ${ZBX_PASS}

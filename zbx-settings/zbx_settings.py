@@ -7,6 +7,7 @@ import urllib.error
 API_URL = os.getenv("ZBX_API_URL", "http://zbx-web:8080/api_jsonrpc.php")  # путь к API Zabbix Web
 ZBX_USER = os.getenv("ZBX_USER")
 ZBX_PASS = os.getenv("ZBX_PASS")
+ZBX_LANG = os.getenv("ZBX_LANG")
 
 WAIT_TIMEOUT = int(os.getenv("WAIT_TIMEOUT", "600"))
 WAIT_INTERVAL = int(os.getenv("WAIT_INTERVAL", "5"))
@@ -370,7 +371,7 @@ def ensure_telegram_mediatype(token, name="Telegram (Webhook)"):
       }
       function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
       function rxEscape(s){ return s.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'); }
-      function fmtRuDate(d,t){ // d=YYYY.MM.DD
+      function fmtRuDate(d,t){
         var m = d.match(/^(\d{4})\.(\d{2})\.(\d{2})$/);
         return m ? (m[3]+'.'+m[2]+'.'+m[1]+' '+t) : (d+' '+t);
       }
@@ -622,7 +623,7 @@ def main():
     token = login(ZBX_USER, ZBX_PASS)
 
     # Интерфейс пользователя на русском
-    set_user_language(token, ZBX_USER, "ru_RU")
+    set_user_language(token, ZBX_USER, ZBX_LANG)
 
     # Создаем хосты webserver1/2/log-srv
     groupid = ensure_group(token, GROUP_NAME)
