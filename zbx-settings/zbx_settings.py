@@ -1,10 +1,25 @@
 import json
 import os
+import socket
 import time
-import urllib.request
 import urllib.error
+import urllib.request
 
 API_URL = os.getenv("ZBX_API_URL", "http://zbx-web:8080/api_jsonrpc.php")  # путь к API Zabbix Web
+
+HTTP_TIMEOUT = 15
+HTTP_TIMEOUT_LONG = 60
+API_RETRIES = 8
+API_RETRY_DELAY = 3
+API_RETRY_BACKOFF = 1.6
+socket.setdefaulttimeout(HTTP_TIMEOUT)
+
+LONG_METHODS = {
+    "host.create", "host.update", "item.create", "item.update",
+    "trigger.create", "trigger.update", "action.create", "action.update",
+    "mediatype.create", "mediatype.update", "user.update", "hostinterface.update", "hostinterface.create",
+}
+
 ZBX_USER = os.getenv("ZBX_USER")
 ZBX_PASS = os.getenv("ZBX_PASS")
 ZBX_LANG = os.getenv("ZBX_LANG")
@@ -33,15 +48,21 @@ LOG_ITEMS = [
         "key_": 'logrt["/var/log/remote/webserver1/syslog.log","LAB-TEST|ERROR|CRITICAL",,,skip]',
         "delay": "1m",
         "trigger_name": "Trigger for webserver1 logs",
-        "trigger_expr": 'count(/log-srv/logrt["/var/log/remote/webserver1/syslog.log","LAB-TEST|ERROR|CRITICAL",,,skip],5m,,"ne")>0'
+        "trigger_expr": 'count(/log-srv/logrt["/var/log/remote/webserver1/syslog.log","LAB-TEST|ERROR|CRITICAL",,,skip],1m)>0'
     },
     {
         "name": 'Log webserver2',
         "key_": 'logrt["/var/log/remote/webserver2/syslog.log","LAB-TEST|ERROR|CRITICAL",,,skip]',
         "delay": "1m",
         "trigger_name": "Trigger for webserver2 logs",
-        "trigger_expr": 'count(/log-srv/logrt["/var/log/remote/webserver2/syslog.log","LAB-TEST|ERROR|CRITICAL",,,skip],5m,,"ne")>0'
+        "trigger_expr": 'count(/log-srv/logrt["/var/log/remote/webserver2/syslog.log","LAB-TEST|ERROR|CRITICAL",,,skip],1m)>0'
     },
+]
+
+LOG_TRIGGER_ACTION_NAME = "Send webserver1/2 LOG problems to Telegram"
+LOG_TRIGGER_NAMES = [
+    "Trigger for webserver1 logs",
+    "Trigger for webserver2 logs",
 ]
 
 # Номера типов в Zabbix API
@@ -56,7 +77,7 @@ req_id = 0
 
 
 def wait_for_api(timeout=600, interval=5):
-    """Ждём, пока фронтенд Zabbix начнёт отвечать на apiinfo.version."""
+    """Ждёт, пока фронтенд Zabbix начнёт отвечать на apiinfo.version."""
     print(f"⌛  Жду ответа от Zabbix API по адресу: {API_URL}")
     deadline = time.time() + timeout
     last_err = None
@@ -71,26 +92,74 @@ def wait_for_api(timeout=600, interval=5):
     raise RuntimeError(f"Zabbix API не поднялся за {timeout}с: {last_err}")
 
 
+def wait_for_login(user, password, timeout=600, interval=5):
+    """Ждет, пока авторизация Zabbix API начнет отвечать (user.login)"""
+    print("⌛  Жду ответа от авторизации Zabbix API...")
+    deadline = time.time() + timeout
+    last_err = None
+    while time.time() < deadline:
+        try:
+            token = login(user, password)
+            print("✅  Авторизация Zabbix API готова.")
+            return token
+        except Exception as e:
+            last_err = e
+            time.sleep(interval)
+    raise RuntimeError(f"user.login так и не ответил за {timeout}с: {last_err}")
+
+
+def wait_for_write_ready(token, timeout=900, interval=5):
+    """Ждет готовность Zabbix к записям"""
+    print("⌛  Проверяю готовность Zabbix к записям...")
+    deadline = time.time() + timeout
+    last_err = None
+    while time.time() < deadline:
+        probe = f"__probe_{int(time.time())}"
+        try:
+            res = call_api("hostgroup.create", {"name": probe}, token)
+            gid = res["groupids"][0]
+            # сразу же удаляем
+            call_api("hostgroup.delete", [gid], token)
+            print("✅  API готов к операциям записи.")
+            return
+        except Exception as e:
+            last_err = e
+            time.sleep(interval)
+    raise RuntimeError(f"Проверка на запись не прошла за {timeout}с: {last_err}")
+
+
 def call_api(method, params, token=None):
-    """Вызов метода Zabbix API и возврат результата."""
+    """Вызов метода Zabbix API."""
     global req_id
-    req_id += 1
-    body = {"jsonrpc": "2.0", "method": method, "params": params or {}, "id": req_id}
-    data = json.dumps(body).encode()
-    headers = {"Content-Type": "application/json-rpc"}
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
-    req = urllib.request.Request(API_URL, data=data, headers=headers)
-    try:
-        with urllib.request.urlopen(req) as r:
-            resp = json.loads(r.read().decode())
-    except urllib.error.HTTPError as e:
-        raise RuntimeError(f"HTTP {e.code}: {e.read().decode(errors='ignore')}")
-    except urllib.error.URLError as e:
-        raise RuntimeError(f"URL error: {e.reason}")
-    if "error" in resp:
-        raise RuntimeError(f"API {method} error: {resp['error']}")
-    return resp["result"]
+    last_err = None
+    timeout = HTTP_TIMEOUT_LONG if method in LONG_METHODS else HTTP_TIMEOUT
+
+    for attempt in range(1, API_RETRIES + 1):
+        req_id += 1
+        body = {"jsonrpc": "2.0", "method": method, "params": params or {}, "id": req_id}
+        if token:
+            body["auth"] = token
+        data = json.dumps(body).encode()
+        headers = {
+            "Content-Type": "application/json-rpc",
+            "Accept": "application/json",
+            "Connection": "close",
+        }
+        req = urllib.request.Request(API_URL, data=data, headers=headers)
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                resp = json.loads(r.read().decode())
+            if "error" in resp:
+                raise RuntimeError(f"API {method} error: {resp['error']}")
+            return resp["result"]
+        except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, ConnectionError) as e:
+            last_err = e
+            sleep = min(API_RETRY_DELAY * (API_RETRY_BACKOFF ** (attempt - 1)), 30)
+            print(
+                f"⚠️  API метод '{method}' попытка {attempt}/{API_RETRIES} не удалась: {e}. Повтор через {sleep:.1f}s")
+            time.sleep(sleep)
+
+    raise RuntimeError(f"API метод '{method}' провалился после {API_RETRIES} попыток: {last_err}")
 
 
 def login(user, password):
@@ -203,21 +272,87 @@ def ensure_log_item(token, hostid, name, key_, delay="1m"):
         return res["itemids"][0]
 
 
-def ensure_trigger(token, description, expression, priority=3):
-    """Создаёт или обновляет триггер."""
+def ensure_trigger(token, description, expression, priority=3, manual_close=1):
+    """
+    Создаёт или обновляет триггер.
+    - priority=4 -> High
+    - manual_close=1 -> Разрешить ручное закрытие
+    """
     r = call_api("trigger.get", {"filter": {"description": [description]}}, token)
+    obj = {
+        "description": description,
+        "expression": expression,
+        "priority": priority,
+        "manual_close": manual_close,
+    }
     if r:
         tid = r[0]["triggerid"]
         try:
-            call_api("trigger.update", {"triggerid": tid, "description": description,
-                                        "expression": expression, "priority": priority}, token)
+            call_api("trigger.update", {"triggerid": tid, **obj}, token)
             return tid
-        except Exception as e:
-            # удалить и пересоздать — на случай «битых» старых выражений
+        except Exception:
+            # удаляем и пересоздаем — на случай «битых» старых выражений
             call_api("trigger.delete", [tid], token)
-    res = call_api("trigger.create", {"description": description,
-                                      "expression": expression, "priority": priority}, token)
+
+    res = call_api("trigger.create", obj, token)
     return res["triggerids"][0]
+
+
+def get_trigger_ids_by_descriptions(token, descriptions):
+    """
+    Возвращает id триггера.
+    """
+    r = call_api("trigger.get", {
+        "filter": {"description": descriptions},
+        "output": ["triggerid", "description"]
+    }, token)
+    found = {t["description"]: t["triggerid"] for t in r}
+    missing = [d for d in descriptions if d not in found]
+    if missing:
+        raise RuntimeError(f"Не найдены триггеры по описанию: {missing}")
+    return found
+
+
+def ensure_trigger_action_for_log_triggers(token, name, mediatypeid, userid, trigger_names):
+    """
+    Создаёт/обновляет Action, которое реагирует только на заданные триггеры логов.
+    """
+    ids = get_trigger_ids_by_descriptions(token, trigger_names)
+
+    conditions = [{
+        "conditiontype": 2,  # 2 = Trigger
+        "operator": 0,
+        "value": str(tid)
+    } for tid in ids.values()]
+
+    action_obj = {
+        "name": name,
+        "eventsource": 0,  # Trigger actions
+        "status": 0,  # enabled
+        "filter": {
+            "evaltype": 2,  # OR (A or B)
+            "conditions": conditions
+        },
+        "operations": [{
+            "operationtype": 0,  # send message
+            "opmessage": {"default_msg": 1, "mediatypeid": mediatypeid},
+            "opmessage_usr": [{"userid": userid}]
+        }],
+        "recovery_operations": [{
+            "operationtype": 0,
+            "opmessage": {"default_msg": 1, "mediatypeid": mediatypeid},
+            "opmessage_usr": [{"userid": userid}]
+        }]
+    }
+
+    cur = call_api("action.get", {"filter": {"name": [name]}}, token)
+    if cur:
+        action_obj["actionid"] = cur[0]["actionid"]
+        call_api("action.update", action_obj, token)
+        return action_obj["actionid"]
+    else:
+        res = call_api("action.create", action_obj, token)
+        return res["actionids"][0]
 
 
 def provision_logs_and_triggers(token):
@@ -226,11 +361,20 @@ def provision_logs_and_triggers(token):
     if not logsrv:
         raise RuntimeError('Хост "log-srv" не найден; сначала создайте его.')
     logsrv_id = logsrv["hostid"]
+
     for it in LOG_ITEMS:
         itemid = ensure_log_item(token, logsrv_id, it["name"], it["key_"], it["delay"])
-        trig_id = ensure_trigger(token, it["trigger_name"], it["trigger_expr"], priority=3)
+
+        trig_id = ensure_trigger(
+            token,
+            it["trigger_name"],
+            it["trigger_expr"],
+            priority=4,
+            manual_close=1  # Разрешаем ручное закрытие
+        )
         print(
-            f"✅  Элемент данных для логов создан/обновлён: {it['name']} (id={itemid})\n✅  Триггер для логов создан/обновлён: {it['trigger_name']} (id={trig_id})")
+            f"✅  Элемент данных для логов создан/обновлён: {it['name']} (id={itemid})\n✅  Триггер для логов создан/обновлён: {it['trigger_name']} (id={trig_id})"
+        )
 
 
 def set_user_language(token, username, lang="ru_RU"):
@@ -362,7 +506,8 @@ def ensure_telegram_mediatype(token, name="Telegram (Webhook)"):
 
     script = r'''
     try {
-      var p = {}; try { p = JSON.parse(typeof value === 'string' ? value : '{}'); } catch(e){}
+      var p = {};
+      try { p = JSON.parse(typeof value === 'string' ? value : '{}'); } catch(e){}
     
       function pick(n){
         if (typeof this[n] !== 'undefined' && this[n] !== null && String(this[n]).length) return String(this[n]);
@@ -372,7 +517,7 @@ def ensure_telegram_mediatype(token, name="Telegram (Webhook)"):
       function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
       function rxEscape(s){ return s.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'); }
       function fmtRuDate(d,t){
-        var m = d.match(/^(\d{4})\.(\d{2})\.(\d{2})$/);
+        var m=d.match(/^(\d{4})\.(\d{2})\.(\d{2})$/);
         return m ? (m[3]+'.'+m[2]+'.'+m[1]+' '+t) : (d+' '+t);
       }
     
@@ -389,48 +534,61 @@ def ensure_telegram_mediatype(token, name="Telegram (Webhook)"):
       if (!tgToken) throw 'No token';
       if (!chatId)  throw 'No chat_id';
     
-      if (cur && /[0-9]/.test(cur)) {
-        var m = cur.match(/([0-9]+(?:[.,][0-9]+)?)/);
-        if (m) cur = (Math.round(parseFloat(m[1].replace(',', '.'))*100)/100) + (/%/.test(cur) ? ' %' : '');
-      }
-    
-      var tshort = tname.replace(new RegExp('^'+rxEscape(host)+':\\s*'),'').trim();
-    
-      var thrSign = '', thrNum = '';
-      var thr = tname.match(/(>|<)\s*([0-9]+(?:[.,][0-9]+)?)\s*%/);
-      if (thr) { thrSign = thr[1]; thrNum = thr[2].replace(',', '.'); }
-      var thrText = (thrSign && thrNum) ? (thrSign + ' ' + thrNum + '%') : '';
-    
+      // Тип события
       var isCpu  = /CPU/i.test(tname);
       var isDisk = /(free space|pfree|disk|свободного места)/i.test(tname);
+      var isLog  = /Trigger\s+for\s+webserver\d+\s+logs/i.test(tname) || /Log\s+webserver\d+/i.test(tname);
+    
+      var webHost = (tname.match(/webserver\d+/i) || [null])[0];
+    
+      // Сократим имя события (без префикса хоста)
+      var tshort = tname.replace(new RegExp('^'+rxEscape(host)+':\\s*'),'').trim();
+    
+      var originLabel = isLog ? 'Получено с центрального сервера логов' : 'Хост события';
     
       var header, descr;
-      if (isCpu) {
+      
+      if (isLog) {
+        header = (status === 'PROBLEM')
+          ? ('🚨 Обнаружена ошибка на сервере ' + esc(webHost || 'webserver'))
+          : ('✅ Ошибка на сервере ' + esc(webHost || 'webserver') + ' устранена');
+        descr = (status === 'PROBLEM')
+          ? 'На веб-сервере обнаружена запись в логах, соответствующая шаблону (LAB-TEST|ERROR|CRITICAL).'
+          : 'Проблема проверена и закрыта. Мониторинг продолжает наблюдение 👀';
+      } else if (isCpu) {
         header = (status === 'PROBLEM') ? '⚠️ Высокая загрузка процессора' : '✅ Высокая загрузка процессора устранена';
-        descr  = (status === 'PROBLEM')
-          ? 'На сервере ' + esc(host) + ' зафиксирована повышенная загрузка CPU.'
-          : 'Загрузка CPU вернулась в норму. Мониторинг продолжает наблюдение 👀';
+        descr  = (status === 'PROBLEM') ? 'Зафиксирована повышенная загрузка CPU.' : 'Загрузка CPU вернулась в норму.';
       } else if (isDisk) {
         header = (status === 'PROBLEM') ? '⚠️ Мало свободного места на диске' : '✅ Диск снова в норме';
-        descr  = (status === 'PROBLEM')
-          ? 'Свободного места недостаточно. Проверьте крупные файлы/логи и очистите место.'
-          : 'Свободное место восстановлено. Мониторинг продолжает наблюдение 👀';
+        descr  = (status === 'PROBLEM') ? 'Свободного места недостаточно.' : 'Свободное место восстановлено.';
       } else {
         header = (status === 'PROBLEM') ? '⚠️ Событие' : '✅ Восстановление';
         descr  = 'Мониторинг продолжает наблюдение 👀';
       }
     
-      var text =
-        header + '\n\n' +
-        'Сервер: <b>' + esc(host) + '</b>\n' +
-        'Событие: ' + esc(tshort) + '\n\n' +
-        '📅 Дата: ' + esc(fmtRuDate(date,time)) + '\n' +
-        (thrText ? ('🎯 Установленный порог: ' + esc(thrText) + '\n') : '') +
-        '📊 Текущее значение: ' + esc(cur || '-') +
-        (descr ? ('\n\n🧩 Описание:\n' + esc(descr)) : '');
+      if (!isLog && cur && /[0-9]/.test(cur)) {
+        var m = cur.match(/([0-9]+(?:[.,][0-9]+)?)/);
+        if (m) cur = (Math.round(parseFloat(m[1].replace(',', '.'))*100)/100) + (/%/.test(cur) ? ' %' : '');
+      }
+    
+      // Текст сообщения
+      var text = header + '\n\n' +
+                 originLabel + ': <b>' + esc(host) + '</b>\n' +
+                 'Событие: ' + esc(tshort) + '\n' +
+                 '📅 Дата: ' + esc(fmtRuDate(date,time)) + '\n';
+    
+      if (isLog) {
+        text += 'Шаблон поиска: <code>LAB-TEST|ERROR|CRITICAL</code>\n';
+        if (cur && cur !== '-') {
+          text += '\n🧾 Последняя запись:\n<code>' + esc(String(cur)).slice(0, 3500) + '</code>\n';
+        }
+      } else {
+        text += '📊 Текущее значение: ' + esc(cur || '-') + '\n';
+      }
     
       if (link) text += '\n\n🔗 ' + esc(link);
     
+      // Отправка в Telegram
       var url = 'https://api.telegram.org/bot' + tgToken +
                 '/sendMessage?chat_id=' + encodeURIComponent(chatId) +
                 '&parse_mode=HTML' +
@@ -452,29 +610,19 @@ def ensure_telegram_mediatype(token, name="Telegram (Webhook)"):
         {"name": "token", "value": (TELEGRAM_BOT_TOKEN or "")},
         {"name": "chat_id", "value": "{ALERT.SENDTO}"},
         {"name": "host", "value": "{HOST.NAME}"},
-        {"name": "severity", "value": "{EVENT.SEVERITY}"},
-        {"name": "status", "value": "{EVENT.STATUS}"},  # PROBLEM | RESOLVED
+        {"name": "status", "value": "{EVENT.STATUS}"},
         {"name": "date", "value": "{EVENT.DATE}"},
         {"name": "time", "value": "{EVENT.TIME}"},
         {"name": "value", "value": "{ITEM.LASTVALUE1}"},
         {"name": "tname", "value": "{TRIGGER.NAME}"},
         {"name": "link", "value": "{TRIGGER.URL}"},
     ]
-
     msg_templates = [
         {"eventsource": 0, "recovery": 0, "subject": "{EVENT.NAME}", "message": "{ALERT.MESSAGE}"},
         {"eventsource": 0, "recovery": 1, "subject": "RECOVERY: {EVENT.NAME}", "message": "{ALERT.MESSAGE}"},
     ]
-
-    obj = {
-        "name": name,
-        "type": 4,  # Webhook
-        "status": 0,  # enabled
-        "parameters": params,
-        "script": script,
-        "message_templates": msg_templates,
-        "timeout": "30s"
-    }
+    obj = {"name": name, "type": 4, "status": 0, "parameters": params, "script": script,
+           "message_templates": msg_templates, "timeout": "30s"}
 
     if mt:
         obj["mediatypeid"] = mt[0]["mediatypeid"]
@@ -530,13 +678,18 @@ def ensure_trigger_action_telegram(token, name, mediatypeid, userid, groupid):
         mediatypeid (str|int): Идентификатор медиа-типа (Telegram Webhook).
         userid (str|int): Пользователь, которому отправлять уведомления.
         groupid (str|int): Идентификатор группы хостов, по которой фильтровать события.
+        кроме хоста log-srv
 
     Возвращает:
         str: Идентификатор действия (actionid).
     """
+    log_host = get_host_by_name(token, "log-srv")
+    if not log_host:
+        raise RuntimeError('Хост "log-srv" не найден для исключения из общего действия.')
+    log_hostid = log_host["hostid"]
 
-    # проверим, есть ли action с таким именем
     cur = call_api("action.get", {"filter": {"name": [name]}}, token)
+
     action = {
         "name": name,
         "eventsource": 0,  # Trigger actions
@@ -545,7 +698,8 @@ def ensure_trigger_action_telegram(token, name, mediatypeid, userid, groupid):
             "evaltype": 0,  # AND
             "conditions": [
                 {"conditiontype": 0, "operator": 0, "value": str(groupid)},  # Host group = Linux servers
-                {"conditiontype": 4, "operator": 5, "value": "2"}  # Severity (уровень) >= Warning
+                {"conditiontype": 4, "operator": 5, "value": "2"},  # Severity >= Warning
+                {"conditiontype": 1, "operator": 1, "value": str(log_hostid)},  # Host != log-srv
             ]
         },
         "operations": [{
@@ -559,6 +713,7 @@ def ensure_trigger_action_telegram(token, name, mediatypeid, userid, groupid):
             "opmessage_usr": [{"userid": userid}]
         }]
     }
+
     if cur:
         action["actionid"] = cur[0]["actionid"]
         call_api("action.update", action, token)
@@ -620,7 +775,9 @@ def main():
     """Основная функция запуска для полной настройки Zabbix."""
     wait_for_api(timeout=WAIT_TIMEOUT, interval=WAIT_INTERVAL)  # Ждём, когда API Zabbix будет доступен
 
-    token = login(ZBX_USER, ZBX_PASS)
+    token = wait_for_login(ZBX_USER, ZBX_PASS, timeout=WAIT_TIMEOUT, interval=WAIT_INTERVAL)
+
+    wait_for_write_ready(token, timeout=max(WAIT_TIMEOUT, 900), interval=5)
 
     # Интерфейс пользователя на русском
     set_user_language(token, ZBX_USER, ZBX_LANG)
@@ -652,6 +809,13 @@ def main():
         ensure_user_media_telegram(token, admin["userid"], mtid, TELEGRAM_CHAT_ID)
         ensure_trigger_action_telegram(token, "Send problems to Telegram (Linux servers ≥ Warning)", mtid,
                                        admin["userid"], groupid)
+        ensure_trigger_action_for_log_triggers(
+            token,
+            LOG_TRIGGER_ACTION_NAME,
+            mtid,
+            admin["userid"],
+            LOG_TRIGGER_NAMES
+        )
         print("✅  Telegram (webhook) успешно установлен!")
     else:
         print("⚠️  Пропускаю настройку Telegram: не заданы TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID.")
