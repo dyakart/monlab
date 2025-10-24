@@ -134,6 +134,7 @@ services:
       WAIT_INTERVAL: ${WAIT_INTERVAL}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
       TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID}
+      ZBX_PROXY_NAME: zbx-proxy-1
     networks:
       labnet:
     restart: "no"
@@ -156,6 +157,27 @@ services:
         ipv4_address: 172.30.0.31
     mem_limit: 200m
     cpus: "0.20"
+
+  zabbix-proxy:
+    image: zabbix/zabbix-proxy-sqlite3:alpine-7.0-latest
+    container_name: zbx-proxy
+    environment:
+      ZBX_HOSTNAME: zbx-proxy-1
+      ZBX_SERVER_HOST: zabbix-server
+      ZBX_PROXYMODE: 0
+      ZBX_CONFIGFREQUENCY: 60
+      ZBX_STARTREPORTWRITERS: 1
+      TZ: ${TZ}
+    depends_on:
+      - zabbix-server
+    volumes:
+      - zbx-proxy-data:/var/lib/zabbix
+    networks:
+      labnet:
+        ipv4_address: 172.30.0.9
+    restart: unless-stopped
+    mem_limit: 256m
+    cpus: "0.5"
 
   # Центральный сервер логов через rsyslog (RELP+TLS)
   log-srv:
@@ -188,6 +210,9 @@ services:
     image: lab/webserver:latest
     container_name: webserver1
     hostname: webserver1
+    environment:
+      AGENT_SERVER: zbx-proxy
+      AGENT_SERVER_ACTIVE: zbx-proxy
     networks:
       labnet:
         ipv4_address: 172.30.0.11
@@ -210,6 +235,9 @@ services:
     image: lab/webserver:latest
     container_name: webserver2
     hostname: webserver2
+    environment:
+      AGENT_SERVER: zbx-proxy
+      AGENT_SERVER_ACTIVE: zbx-proxy
     networks:
       labnet:
         ipv4_address: 172.30.0.12
@@ -223,6 +251,52 @@ services:
     restart: unless-stopped
     #mem_limit: 224m
     #cpus: "0.15"
+
+  webserver3:
+    depends_on:
+      certs-init:
+        condition: service_completed_successfully
+    build: ./web
+    image: lab/webserver:latest
+    container_name: webserver3
+    hostname: webserver3
+    environment:
+      AGENT_SERVER: zbx-proxy
+      AGENT_SERVER_ACTIVE: zbx-proxy
+    networks:
+      labnet:
+        ipv4_address: 172.30.0.13
+    ports: [ "8083:80" ]
+    volumes:
+      - ./rsyslog/certs/ca/ca.crt:/etc/rsyslog/certs/ca.crt:ro
+      - ./rsyslog/certs/web3/client.crt:/etc/rsyslog/certs/client.crt:ro
+      - ./rsyslog/certs/web3/client.key:/etc/rsyslog/certs/client.key:ro
+    restart: unless-stopped
+#    mem_limit: 224m
+#    cpus: "0.15"
+
+  webserver4:
+    depends_on:
+      certs-init:
+        condition: service_completed_successfully
+    build: ./web
+    image: lab/webserver:latest
+    container_name: webserver4
+    hostname: webserver4
+    environment:
+      AGENT_SERVER: zbx-proxy
+      AGENT_SERVER_ACTIVE: zbx-proxy
+    networks:
+      labnet:
+        ipv4_address: 172.30.0.14
+    ports: [ "8084:80" ]
+    volumes:
+      - ./rsyslog/certs/ca/ca.crt:/etc/rsyslog/certs/ca.crt:ro
+      - ./rsyslog/certs/web4/client.crt:/etc/rsyslog/certs/client.crt:ro
+      - ./rsyslog/certs/web4/client.key:/etc/rsyslog/certs/client.key:ro
+    restart: unless-stopped
+#    mem_limit: 224m
+#    cpus: "0.15"
 
   # Splunk
   splunk:
@@ -293,3 +367,4 @@ volumes:
   rsyslog-logs:
   web1-logs:
   web2-logs:
+  zbx-proxy-data:

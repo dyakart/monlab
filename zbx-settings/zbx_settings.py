@@ -34,9 +34,13 @@ GROUP_NAME = "Linux servers"
 TEMPLATE_LINUX_AGENT = "Linux by Zabbix agent"
 TEMPLATE_SERVER_HEALTH = "Zabbix server health"
 
+PROXY_NAME = os.getenv("ZBX_PROXY_NAME", "zbx-proxy-1")
+
 HOSTS = [
     {"host": "webserver1", "dns": "webserver1", "port": "10050", "templates": [TEMPLATE_LINUX_AGENT]},
     {"host": "webserver2", "dns": "webserver2", "port": "10050", "templates": [TEMPLATE_LINUX_AGENT]},
+    {"host": "webserver3", "dns": "webserver3", "port": "10050", "templates": [TEMPLATE_LINUX_AGENT]},
+    {"host": "webserver4", "dns": "webserver4", "port": "10050", "templates": [TEMPLATE_LINUX_AGENT]},
     {"host": "log-srv", "dns": "log-srv", "port": "10050", "templates": []},
     {"host": "monitoring-plugins", "dns": "monitoring-plugins", "port": "10050", "templates": []},
 ]
@@ -57,12 +61,28 @@ LOG_ITEMS = [
         "trigger_name": "Trigger for webserver2 logs",
         "trigger_expr": 'count(/log-srv/logrt["/var/log/remote/webserver2/syslog.log","LAB-TEST|ERROR|CRITICAL",,,skip],1m)>0'
     },
+    {
+        "name": 'Log webserver3',
+        "key_": 'logrt["/var/log/remote/webserver3/syslog.log","LAB-TEST|ERROR|CRITICAL",,,skip]',
+        "delay": "1m",
+        "trigger_name": "Trigger for webserver3 logs",
+        "trigger_expr": 'count(/log-srv/logrt["/var/log/remote/webserver3/syslog.log","LAB-TEST|ERROR|CRITICAL",,,skip],1m)>0'
+    },
+    {
+        "name": 'Log webserver4',
+        "key_": 'logrt["/var/log/remote/webserver4/syslog.log","LAB-TEST|ERROR|CRITICAL",,,skip]',
+        "delay": "1m",
+        "trigger_name": "Trigger for webserver4 logs",
+        "trigger_expr": 'count(/log-srv/logrt["/var/log/remote/webserver4/syslog.log","LAB-TEST|ERROR|CRITICAL",,,skip],1m)>0'
+    },
 ]
 
-LOG_TRIGGER_ACTION_NAME = "Send webserver1/2 LOG problems to Telegram"
+LOG_TRIGGER_ACTION_NAME = "Send webserver1..4 LOG problems to Telegram"
 LOG_TRIGGER_NAMES = [
     "Trigger for webserver1 logs",
     "Trigger for webserver2 logs",
+    "Trigger for webserver3 logs",
+    "Trigger for webserver4 logs",
 ]
 
 # Номера типов в Zabbix API
@@ -94,7 +114,7 @@ def wait_for_api(timeout=600, interval=5):
 
 def wait_for_login(user, password, timeout=600, interval=5):
     """Ждет, пока авторизация Zabbix API начнет отвечать (user.login)"""
-    print("⌛  Жду ответа от авторизации Zabbix API...")
+    print("⌛  Жду ответа от сервиса авторизации Zabbix API...")
     deadline = time.time() + timeout
     last_err = None
     while time.time() < deadline:
@@ -167,6 +187,22 @@ def login(user, password):
     return call_api("user.login", {"username": user, "password": password})
 
 
+def ensure_proxy(token, name, mode=0):
+    """Возвращает proxyid по имени или создает прокси."""
+    r = call_api("proxy.get", {
+        "output": ["proxyid", "name"],
+        "filter": {"name": [name]}
+    }, token)
+    if r:
+        return r[0]["proxyid"]
+
+    res = call_api("proxy.create", {
+        "name": name,
+        "operating_mode": mode  # 0=active, 1=passive
+    }, token)
+    return res["proxyids"][0]
+
+
 def ensure_group(token, name):
     """Создает группу для хостов, если её нет и возвращает её ID."""
     r = call_api("hostgroup.get", {"filter": {"name": [name]}}, token)
@@ -225,7 +261,7 @@ def set_templates_exact(token, hostid, templateids_wanted):
     }, token)
 
 
-def ensure_host(token, groupid, host, dns, port, template_names):
+def ensure_host(token, groupid, host, dns, port, template_names, proxy_hostid=None):
     """Создаёт хост при его отсутствии и заполняет нужными данными."""
     templateids = get_template_ids(token, template_names)
     desired_if = {"type": 1, "main": 1, "useip": 0, "ip": "", "dns": dns, "port": port}
@@ -236,6 +272,11 @@ def ensure_host(token, groupid, host, dns, port, template_names):
             "groups": [{"groupid": groupid}],
             "interfaces": [desired_if],
         }
+
+        if proxy_hostid:
+            params["monitored_by"] = 1  # 1 = Proxy
+            params["proxyid"] = proxy_hostid
+
         if templateids:
             params["templates"] = [{"templateid": tid} for tid in templateids]
         res = call_api("host.create", params, token)
@@ -243,9 +284,18 @@ def ensure_host(token, groupid, host, dns, port, template_names):
     else:
         hostid = existing["hostid"]
         cur_groups = {g["groupid"] for g in existing.get("groups", [])}
+
+        if proxy_hostid:
+            call_api("host.update", {
+                "hostid": hostid,
+                "monitored_by": 1,
+                "proxyid": proxy_hostid
+            }, token)
+
         if groupid not in cur_groups:
             call_api("host.update", {"hostid": hostid,
                                      "groups": [{"groupid": gid} for gid in sorted(cur_groups | {groupid})]}, token)
+
         ensure_interface(token, hostid, desired_if)
         set_templates_exact(token, hostid, templateids)
         return hostid
@@ -471,7 +521,7 @@ def ensure_numeric_item_on_host(token, host_name, name, key_, value_type=VALUE_T
     return res["itemids"][0]
 
 
-def ensure_required_items_for_hosts(token, hosts=("webserver1", "webserver2")):
+def ensure_required_items_for_hosts(token, hosts=("webserver1","webserver2","webserver3","webserver4")):
     """
     Создаёт элементы данных для CPU и свободного места на /.
     """
@@ -723,7 +773,7 @@ def ensure_trigger_action_telegram(token, name, mediatypeid, userid, groupid):
         return res["actionids"][0]
 
 
-def ensure_cpu_disk_triggers(token, hosts=("webserver1", "webserver2")):
+def ensure_cpu_disk_triggers(token, hosts=("webserver1","webserver2","webserver3","webserver4")):
     """
     Создаёт, если их нет базовые триггеры по CPU и свободному месту на корне для заданных хостов.
 
@@ -783,9 +833,10 @@ def main():
     set_user_language(token, ZBX_USER, ZBX_LANG)
 
     # Создаем хосты webserver1/2/log-srv
+    proxyid = ensure_proxy(token, PROXY_NAME, mode=0)
     groupid = ensure_group(token, GROUP_NAME)
     for h in HOSTS:
-        hid = ensure_host(token, groupid, h["host"], h["dns"], h["port"], h["templates"])
+        hid = ensure_host(token, groupid, h["host"], h["dns"], h["port"], h["templates"], proxy_hostid = proxyid if h["host"].startswith("webserver") else None)
         print(f"✅  Хост создан/обновлён: {h['host']} (id={hid})")
 
     # Создаем элементы данных и триггеры для логов на хосте log-srv

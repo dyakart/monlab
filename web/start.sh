@@ -5,6 +5,12 @@ sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/ssh
 ssh-keygen -A
 /usr/sbin/sshd
 
+AGENT_SERVER="${AGENT_SERVER:-zabbix-server}"
+AGENT_SERVER_ACTIVE="${AGENT_SERVER_ACTIVE:-$AGENT_SERVER}"
+sed -i "s/^#\?Server=.*/Server=${AGENT_SERVER}/" /etc/zabbix/zabbix_agent2.conf
+sed -i "s/^#\?ServerActive=.*/ServerActive=${AGENT_SERVER_ACTIVE}/" /etc/zabbix/zabbix_agent2.conf
+sed -i "s/^#\?HostnameItem=.*/HostnameItem=system.hostname/" /etc/zabbix/zabbix_agent2.conf
+
 # Zabbix Agent2
 mkdir -p /run/zabbix
 chown -R zabbix:zabbix /run/zabbix
