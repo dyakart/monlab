@@ -59,6 +59,8 @@ rsyslog/certs/ca
 rsyslog/certs/server
 rsyslog/certs/web1
 rsyslog/certs/web2
+rsyslog/certs/web3
+rsyslog/certs/web4
 
 # python test scripts
 gh_tree.py
