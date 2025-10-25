@@ -1,0 +1,15 @@
+agentAddress udp:161
+
+# SNMPv3 user
+createUser zabbix SHA "${SNMP_AUTH_PASS}" AES "${SNMP_PRIV_PASS}"
+rouser zabbix authpriv
+
+# System info
+sysLocation  "Datacenter"
+sysContact   "admin@company.com"
+sysName      ${HOSTNAME}
+
+# Немного мониторинга
+disk / 10000
+proc nginx
+proc sshd

@@ -4,6 +4,11 @@ networks:
     ipam:
       config:
         - subnet: 172.30.0.0/24
+  labnet_secondary:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.30.1.0/24
 
 services:
   # Запускаем сервис для создания TSL-сертификатов для каждого хоста
@@ -135,6 +140,8 @@ services:
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
       TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID}
       ZBX_PROXY_NAME: zbx-proxy-1
+      SNMP_AUTH_PASS: ${SNMP_AUTH_PASS}
+      SNMP_PRIV_PASS: ${SNMP_PRIV_PASS}
     networks:
       labnet:
     restart: "no"
@@ -213,11 +220,18 @@ services:
     environment:
       AGENT_SERVER: zbx-proxy
       AGENT_SERVER_ACTIVE: zbx-proxy
+      SNMP_AUTH_PASS: ${SNMP_AUTH_PASS}
+      SNMP_PRIV_PASS: ${SNMP_PRIV_PASS}
     networks:
       labnet:
         ipv4_address: 172.30.0.11
+      labnet_secondary:
+        ipv4_address: 172.30.1.11
     ports:
       - "8081:80"
+      - "1161:161/udp"
+    cap_add:
+      - NET_ADMIN
     volumes:
       - ./rsyslog/certs/ca/ca.crt:/etc/rsyslog/certs/ca.crt:ro
       - ./rsyslog/certs/web1/client.crt:/etc/rsyslog/certs/client.crt:ro
@@ -238,6 +252,8 @@ services:
     environment:
       AGENT_SERVER: zbx-proxy
       AGENT_SERVER_ACTIVE: zbx-proxy
+      SNMP_AUTH_PASS: ${SNMP_AUTH_PASS}
+      SNMP_PRIV_PASS: ${SNMP_PRIV_PASS}
     networks:
       labnet:
         ipv4_address: 172.30.0.12
@@ -263,6 +279,8 @@ services:
     environment:
       AGENT_SERVER: zbx-proxy
       AGENT_SERVER_ACTIVE: zbx-proxy
+      SNMP_AUTH_PASS: ${SNMP_AUTH_PASS}
+      SNMP_PRIV_PASS: ${SNMP_PRIV_PASS}
     networks:
       labnet:
         ipv4_address: 172.30.0.13
@@ -286,6 +304,8 @@ services:
     environment:
       AGENT_SERVER: zbx-proxy
       AGENT_SERVER_ACTIVE: zbx-proxy
+      SNMP_AUTH_PASS: ${SNMP_AUTH_PASS}
+      SNMP_PRIV_PASS: ${SNMP_PRIV_PASS}
     networks:
       labnet:
         ipv4_address: 172.30.0.14

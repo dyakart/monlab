@@ -14,6 +14,10 @@ API_RETRY_DELAY = 3
 API_RETRY_BACKOFF = 1.6
 socket.setdefaulttimeout(HTTP_TIMEOUT)
 
+ITEM_TYPE_SNMP_AGENT = 20
+PREPROC_MULTIPLY = 1
+ERRH_IGNORE = 0
+
 LONG_METHODS = {
     "host.create", "host.update", "item.create", "item.update",
     "trigger.create", "trigger.update", "action.create", "action.update",
@@ -23,6 +27,10 @@ LONG_METHODS = {
 ZBX_USER = os.getenv("ZBX_USER")
 ZBX_PASS = os.getenv("ZBX_PASS")
 ZBX_LANG = os.getenv("ZBX_LANG")
+
+SNMPV3_USER = "zabbix"
+SNMP_AUTH_PASS = os.getenv("SNMP_AUTH_PASS", "")
+SNMP_PRIV_PASS = os.getenv("SNMP_PRIV_PASS", "")
 
 WAIT_TIMEOUT = int(os.getenv("WAIT_TIMEOUT", "600"))
 WAIT_INTERVAL = int(os.getenv("WAIT_INTERVAL", "5"))
@@ -521,7 +529,7 @@ def ensure_numeric_item_on_host(token, host_name, name, key_, value_type=VALUE_T
     return res["itemids"][0]
 
 
-def ensure_required_items_for_hosts(token, hosts=("webserver1","webserver2","webserver3","webserver4")):
+def ensure_required_items_for_hosts(token, hosts=("webserver1", "webserver2", "webserver3", "webserver4")):
     """
     Создаёт элементы данных для CPU и свободного места на /.
     """
@@ -773,7 +781,7 @@ def ensure_trigger_action_telegram(token, name, mediatypeid, userid, groupid):
         return res["actionids"][0]
 
 
-def ensure_cpu_disk_triggers(token, hosts=("webserver1","webserver2","webserver3","webserver4")):
+def ensure_cpu_disk_triggers(token, hosts=("webserver1", "webserver2", "webserver3", "webserver4")):
     """
     Создаёт, если их нет базовые триггеры по CPU и свободному месту на корне для заданных хостов.
 
@@ -821,6 +829,187 @@ def provision_plugin_items(token):
         "✅  Элементы данных для контейнера 'monitoring-plugins' для проверки доступности HTTP и размера логов успешно установлены!")
 
 
+def ensure_templategroup(token, name="Templates"):
+    """Возвращает ID группы шаблонов с именем name, создавая её при отсутствии."""
+    r = call_api("templategroup.get", {"filter": {"name": [name]}}, token)
+    if r: return r[0]["groupid"]
+    return call_api("templategroup.create", {"name": name}, token)["groupids"][0]
+
+
+def ensure_valuemap_ifoperstatus(token, templateid):
+    """Создаёт/обновляет valuemap 'ifOperStatus' на шаблоне и возвращает его ID."""
+    entries = [
+        {"value": "1", "newvalue": "up"},
+        {"value": "2", "newvalue": "down"},
+        {"value": "3", "newvalue": "testing"},
+        {"value": "4", "newvalue": "unknown"},
+        {"value": "5", "newvalue": "dormant"},
+        {"value": "6", "newvalue": "notPresent"},
+        {"value": "7", "newvalue": "lowerLayerDown"},
+    ]
+
+    r = call_api("valuemap.get", {
+        "filter": {"name": ["ifOperStatus"]},
+        "hostids": [templateid]
+    }, token)
+
+    if r:
+        call_api("valuemap.update", {
+            "valuemapid": r[0]["valuemapid"],
+            "mappings": entries
+        }, token)
+        return r[0]["valuemapid"]
+
+    res = call_api("valuemap.create", {
+        "name": "ifOperStatus",
+        "mappings": entries,
+        "hostid": templateid
+    }, token)
+    return res["valuemapids"][0]
+
+
+def ensure_template_snmp(token, name="New SNMP"):
+    """Возвращает ID SNMP-шаблона с именем name, создавая его в группе Templates при отсутствии."""
+    tg_id = ensure_templategroup(token, "Templates")
+    t = call_api("template.get", {"filter": {"host": [name]}}, token)
+    if t:
+        return t[0]["templateid"]
+    res = call_api("template.create", {"host": name, "name": name, "groups": [{"groupid": tg_id}]}, token)
+    return res["templateids"][0]
+
+
+def ensure_item_on_template(token, templateid, **kwargs):
+    """Создаёт или обновляет item на шаблоне и возвращает его ID."""
+    vt = int(kwargs.get("value_type", VALUE_TYPE_FLOAT))
+    default_history = "31d"
+    default_trends  = "0" if vt in (1, 2, 4) else "90d"
+
+    history = kwargs.pop("history", default_history)
+    trends  = kwargs.pop("trends",  default_trends)
+
+    # ищем существующий item по ключу на шаблоне
+    r = call_api("item.get", {"hostids": templateid, "filter": {"key_": kwargs["key_"]}}, token)
+
+    if r:
+        itemid = r[0]["itemid"]
+        update_obj = {"itemid": itemid, "history": history, "trends": trends, **kwargs}
+        update_obj.pop("hostid", None)
+        call_api("item.update", update_obj, token)
+        return itemid
+    else:
+        create_obj = {"hostid": templateid, "history": history, "trends": trends, **kwargs}
+        return call_api("item.create", create_obj, token)["itemids"][0]
+
+
+def ensure_snmp_items_and_trigger(token, templateid):
+    """Добавляет стандартные SNMP-items на шаблон и триггер на падение eth1."""
+    vmid = ensure_valuemap_ifoperstatus(token, templateid)
+
+    ensure_item_on_template(
+        token, templateid,
+        name="SNMP System Uptime (sysUpTime)",
+        key_='snmp.get[1.3.6.1.2.1.1.3.0]',
+        snmp_oid='1.3.6.1.2.1.1.3.0',
+        type=ITEM_TYPE_SNMP_AGENT,
+        value_type=0,  # float
+        delay="1m",
+        preprocessing=[{
+            "type": PREPROC_MULTIPLY, "params": "0.01",
+            "error_handler": ERRH_IGNORE, "error_handler_params": ""
+        }],
+        tags=[{"tag": "user", "value": "snmp"}]
+    )
+
+    # ifOperStatus eth1
+    iid = ensure_item_on_template(
+        token, templateid,
+        name="SNMP Interface eth1 Status (ifOperStatus)",
+        key_='snmp.get[1.3.6.1.2.1.2.2.1.8.3]',
+        snmp_oid='1.3.6.1.2.1.2.2.1.8.3',
+        type=ITEM_TYPE_SNMP_AGENT,  # SNMP agent
+        value_type=3,  # unsigned
+        delay="1m",
+        valuemapid=vmid,
+        tags=[{"tag": "user", "value": "snmp"}]
+    )
+
+    # sysDescr
+    ensure_item_on_template(
+        token, templateid,
+        name="SNMP System Description (sysDescr)",
+        key_='snmp.get[1.3.6.1.2.1.1.1.0]',
+        snmp_oid='1.3.6.1.2.1.1.1.0',
+        type=ITEM_TYPE_SNMP_AGENT,
+        value_type=4,  # text
+        delay="5m",
+        trends="0",
+        tags=[{"tag": "user", "value": "snmp"}]
+    )
+
+    # ssCpuRawUser
+    ensure_item_on_template(
+        token, templateid,
+        name="SNMP CPU User Time (ssCpuRawUser)",
+        key_='snmp.get[1.3.6.1.4.1.2021.11.11.0]',
+        snmp_oid='1.3.6.1.4.1.2021.11.11.0',
+        type=ITEM_TYPE_SNMP_AGENT,
+        value_type=0,  # float
+        delay="1m",
+        preprocessing=[{
+            "type": PREPROC_MULTIPLY, "params": "0.01",
+            "error_handler": ERRH_IGNORE, "error_handler_params": ""
+        }],
+        units="%",
+        tags=[{"tag": "user", "value": "snmp"}]
+    )
+
+    # hrSystemProcesses
+    ensure_item_on_template(
+        token, templateid,
+        name="SNMP System Processes (hrSystemProcesses)",
+        key_='snmp.get[1.3.6.1.2.1.25.1.6.0]',
+        snmp_oid='1.3.6.1.2.1.25.1.6.0',
+        type=ITEM_TYPE_SNMP_AGENT,
+        value_type=3,  # uint
+        delay="1m",
+        tags=[{"tag": "user", "value": "snmp"}]
+    )
+
+    # Триггер: eth1 down
+    expr = 'last(/New SNMP/snmp.get[1.3.6.1.2.1.2.2.1.8.3])=2'
+    ensure_trigger(token, "Interface eth1 is down on {HOST.NAME}", expr, priority=4, manual_close=0)
+
+
+def ensure_snmpv3_interface(token, host_name):
+    """Создаёт или обновляет SNMPv3-интерфейс хоста и задаёт параметры безопасности."""
+    if not SNMP_AUTH_PASS or not SNMP_PRIV_PASS:
+        raise RuntimeError("SNMP_AUTH_PASS/SNMP_PRIV_PASS не заданы для SNMPv3 интерфейса")
+    host = get_host_by_name(token, host_name)
+    if not host: raise RuntimeError(f'Хост "{host_name}" не найден')
+    hostid = host["hostid"]
+
+    ifs = call_api("hostinterface.get", {"hostids": hostid}, token)
+    snmp_if = next((i for i in ifs if int(i.get("type", 2)) == 2), None)
+
+    desired = {
+        "hostid": hostid, "type": 2, "main": 1, "useip": 0,
+        "ip": "", "dns": host_name, "port": "161",
+        "details": {
+            "version": 3, "bulk": 1, "maxrepetitions": 3,
+            "securityname": SNMPV3_USER, "securitylevel": 2,  # 2=authPriv
+            "authprotocol": 1,  # 1=SHA1
+            "authpassphrase": SNMP_AUTH_PASS,
+            "privprotocol": 1,  # 1=AES128
+            "privpassphrase": SNMP_PRIV_PASS,
+            "contextname": ""
+        }
+    }
+    if snmp_if:
+        call_api("hostinterface.update", {"interfaceid": snmp_if["interfaceid"], **desired}, token)
+    else:
+        call_api("hostinterface.create", desired, token)
+
+
 def main():
     """Основная функция запуска для полной настройки Zabbix."""
     wait_for_api(timeout=WAIT_TIMEOUT, interval=WAIT_INTERVAL)  # Ждём, когда API Zabbix будет доступен
@@ -836,8 +1025,21 @@ def main():
     proxyid = ensure_proxy(token, PROXY_NAME, mode=0)
     groupid = ensure_group(token, GROUP_NAME)
     for h in HOSTS:
-        hid = ensure_host(token, groupid, h["host"], h["dns"], h["port"], h["templates"], proxy_hostid = proxyid if h["host"].startswith("webserver") else None)
+        hid = ensure_host(token, groupid, h["host"], h["dns"], h["port"], h["templates"],
+                          proxy_hostid=proxyid if h["host"].startswith("webserver") else None)
         print(f"✅  Хост создан/обновлён: {h['host']} (id={hid})")
+
+    # SNMPv3
+    snmp_tpl_id = ensure_template_snmp(token, "New SNMP")
+    ensure_snmp_items_and_trigger(token, snmp_tpl_id)
+    ensure_snmpv3_interface(token, "webserver1")
+
+    # привязываем наш шаблон к webserver1
+    h = get_host_by_name(token, "webserver1")
+    cur = {t["templateid"] for t in h.get("parentTemplates", [])}
+    cur.add(snmp_tpl_id)
+    set_templates_exact(token, h["hostid"], list(cur))
+    print("✅  SNMPv3 успешно настроен: интерфейс + наш шаблон New SNMP привязан к webserver1")
 
     # Создаем элементы данных и триггеры для логов на хосте log-srv
     provision_logs_and_triggers(token)
