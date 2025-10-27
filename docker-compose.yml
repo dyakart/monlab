@@ -174,6 +174,7 @@ services:
       ZBX_PROXYMODE: 0
       ZBX_CONFIGFREQUENCY: 60
       ZBX_STARTREPORTWRITERS: 1
+      ZBX_STARTSNMPPOLLER: 2
       TZ: ${TZ}
     depends_on:
       - zabbix-server
@@ -237,6 +238,7 @@ services:
       - ./rsyslog/certs/web1/client.crt:/etc/rsyslog/certs/client.crt:ro
       - ./rsyslog/certs/web1/client.key:/etc/rsyslog/certs/client.key:ro
       - web1-logs:/var/log
+      - web1-snmp:/var/lib/snmp
     restart: unless-stopped
     #mem_limit: 224m
     #cpus: "0.15"
@@ -388,3 +390,4 @@ volumes:
   web1-logs:
   web2-logs:
   zbx-proxy-data:
+  web1-snmp:

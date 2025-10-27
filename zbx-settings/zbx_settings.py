@@ -330,7 +330,8 @@ def ensure_log_item(token, hostid, name, key_, delay="1m"):
         return res["itemids"][0]
 
 
-def ensure_trigger(token, description, expression, priority=3, manual_close=1):
+def ensure_trigger(token, description, expression, priority=3, manual_close=1, recovery_mode=None,
+                   recovery_expression=None):
     """
     Создаёт или обновляет триггер.
     - priority=4 -> High
@@ -343,6 +344,12 @@ def ensure_trigger(token, description, expression, priority=3, manual_close=1):
         "priority": priority,
         "manual_close": manual_close,
     }
+
+    if recovery_mode is not None:
+        obj["recovery_mode"] = recovery_mode
+        if recovery_mode in (1, 2) and recovery_expression:
+            obj["recovery_expression"] = recovery_expression
+
     if r:
         tid = r[0]["triggerid"]
         try:
@@ -557,7 +564,7 @@ def ensure_telegram_mediatype(token, name="Telegram (Webhook)"):
     Что настраивается:
         - type=4 (Webhook), status=0 (включен), timeout="30s".
         - parameters: `token`, `chat_id`, `Message`.
-        - script: JS-код с POST на `https://api.telegram.org/bot{token}/sendMessage`.
+        - script: JS-код с GET на `https://api.telegram.org/bot{token}/sendMessage`.
         - message_templates: шаблоны для обычного события и восстановления.
     """
     mt = call_api("mediatype.get", {"filter": {"name": [name]}}, token)
@@ -620,7 +627,7 @@ def ensure_telegram_mediatype(token, name="Telegram (Webhook)"):
         header = (status === 'PROBLEM') ? '⚠️ Мало свободного места на диске' : '✅ Диск снова в норме';
         descr  = (status === 'PROBLEM') ? 'Свободного места недостаточно.' : 'Свободное место восстановлено.';
       } else {
-        header = (status === 'PROBLEM') ? '⚠️ Событие' : '✅ Восстановление';
+        header = (status === 'PROBLEM') ? '⚠️ Обнаружена проблема' : '✅ Проблема устранена';
         descr  = 'Мониторинг продолжает наблюдение 👀';
       }
     
@@ -786,8 +793,8 @@ def ensure_cpu_disk_triggers(token, hosts=("webserver1", "webserver2", "webserve
     Создаёт, если их нет базовые триггеры по CPU и свободному месту на корне для заданных хостов.
 
     Для каждого хоста добавляет два триггера:
-      1) Высокая загрузка CPU: среднее за 5 минут > 85% (`system.cpu.util`).
-      2) Мало свободного места на `/`: доля свободного < 10% (`vfs.fs.size[/,pfree]`).
+      1) Высокая загрузка CPU: среднее за 5 минут > 50% (`system.cpu.util`).
+      2) Мало свободного места на `/`: доля свободного < 40% (`vfs.fs.size[/,pfree]`).
 
     Параметры:
         token (str): Zabbix API токен.
@@ -878,26 +885,45 @@ def ensure_template_snmp(token, name="New SNMP"):
     return res["templateids"][0]
 
 
+
 def ensure_item_on_template(token, templateid, **kwargs):
     """Создаёт или обновляет item на шаблоне и возвращает его ID."""
     vt = int(kwargs.get("value_type", VALUE_TYPE_FLOAT))
     default_history = "31d"
     default_trends  = "0" if vt in (1, 2, 4) else "90d"
+    default_timeout = "5s"
 
     history = kwargs.pop("history", default_history)
     trends  = kwargs.pop("trends",  default_trends)
+    timeout = kwargs.pop("timeout", default_timeout)
 
-    # ищем существующий item по ключу на шаблоне
+    is_snmp = int(kwargs.get("type", ITEM_TYPE_ZABBIX_AGENT)) == ITEM_TYPE_SNMP_AGENT
+
+    # Ищем существующий item по ключу на шаблоне
     r = call_api("item.get", {"hostids": templateid, "filter": {"key_": kwargs["key_"]}}, token)
 
     if r:
         itemid = r[0]["itemid"]
-        update_obj = {"itemid": itemid, "history": history, "trends": trends, **kwargs}
+        update_obj = {
+            "itemid": itemid,
+            "history": history,
+            "trends": trends,
+            **kwargs
+        }
+        if not is_snmp:
+            update_obj["timeout"] = timeout
         update_obj.pop("hostid", None)
         call_api("item.update", update_obj, token)
         return itemid
     else:
-        create_obj = {"hostid": templateid, "history": history, "trends": trends, **kwargs}
+        create_obj = {
+            "hostid": templateid,
+            "history": history,
+            "trends": trends,
+            **kwargs
+        }
+        if not is_snmp:
+            create_obj["timeout"] = timeout
         return call_api("item.create", create_obj, token)["itemids"][0]
 
 
@@ -913,6 +939,7 @@ def ensure_snmp_items_and_trigger(token, templateid):
         type=ITEM_TYPE_SNMP_AGENT,
         value_type=0,  # float
         delay="1m",
+        timeout="5s",
         preprocessing=[{
             "type": PREPROC_MULTIPLY, "params": "0.01",
             "error_handler": ERRH_IGNORE, "error_handler_params": ""
@@ -921,14 +948,15 @@ def ensure_snmp_items_and_trigger(token, templateid):
     )
 
     # ifOperStatus eth1
-    iid = ensure_item_on_template(
+    ensure_item_on_template(
         token, templateid,
         name="SNMP Interface eth1 Status (ifOperStatus)",
-        key_='snmp.get[1.3.6.1.2.1.2.2.1.8.3]',
-        snmp_oid='1.3.6.1.2.1.2.2.1.8.3',
-        type=ITEM_TYPE_SNMP_AGENT,  # SNMP agent
-        value_type=3,  # unsigned
-        delay="1m",
+        key_='snmp.get[1.3.6.1.2.1.2.2.1.8.{$IFINDEX_ETH1}]',
+        snmp_oid='1.3.6.1.2.1.2.2.1.8.{$IFINDEX_ETH1}',
+        type=ITEM_TYPE_SNMP_AGENT,
+        value_type=3,
+        delay="30s",
+        timeout="5s",
         valuemapid=vmid,
         tags=[{"tag": "user", "value": "snmp"}]
     )
@@ -942,6 +970,7 @@ def ensure_snmp_items_and_trigger(token, templateid):
         type=ITEM_TYPE_SNMP_AGENT,
         value_type=4,  # text
         delay="5m",
+        timeout="5s",
         trends="0",
         tags=[{"tag": "user", "value": "snmp"}]
     )
@@ -955,6 +984,7 @@ def ensure_snmp_items_and_trigger(token, templateid):
         type=ITEM_TYPE_SNMP_AGENT,
         value_type=0,  # float
         delay="1m",
+        timeout="5s",
         preprocessing=[{
             "type": PREPROC_MULTIPLY, "params": "0.01",
             "error_handler": ERRH_IGNORE, "error_handler_params": ""
@@ -972,12 +1002,23 @@ def ensure_snmp_items_and_trigger(token, templateid):
         type=ITEM_TYPE_SNMP_AGENT,
         value_type=3,  # uint
         delay="1m",
+        timeout="5s",
         tags=[{"tag": "user", "value": "snmp"}]
     )
 
-    # Триггер: eth1 down
-    expr = 'last(/New SNMP/snmp.get[1.3.6.1.2.1.2.2.1.8.3])=2'
-    ensure_trigger(token, "Interface eth1 is down on {HOST.NAME}", expr, priority=4, manual_close=0)
+    # Триггер
+    expr_problem  = 'last(/New SNMP/snmp.get[1.3.6.1.2.1.2.2.1.8.{$IFINDEX_ETH1}])=2 or {$FORCE_ETH1_PROBLEM}=1'
+    expr_recovery = 'last(/New SNMP/snmp.get[1.3.6.1.2.1.2.2.1.8.{$IFINDEX_ETH1}])=1 and {$FORCE_ETH1_PROBLEM}=0'
+
+    ensure_trigger(
+        token,
+        "Interface eth1 is down on {HOST.NAME}",
+        expr_problem,
+        priority=4,
+        manual_close=0,
+        recovery_mode=1,
+        recovery_expression=expr_recovery
+    )
 
 
 def ensure_snmpv3_interface(token, host_name):
@@ -995,7 +1036,7 @@ def ensure_snmpv3_interface(token, host_name):
         "hostid": hostid, "type": 2, "main": 1, "useip": 0,
         "ip": "", "dns": host_name, "port": "161",
         "details": {
-            "version": 3, "bulk": 1, "maxrepetitions": 3,
+            "version": 3, "bulk": 0, "maxrepetitions": 5,
             "securityname": SNMPV3_USER, "securitylevel": 2,  # 2=authPriv
             "authprotocol": 1,  # 1=SHA1
             "authpassphrase": SNMP_AUTH_PASS,
@@ -1008,6 +1049,43 @@ def ensure_snmpv3_interface(token, host_name):
         call_api("hostinterface.update", {"interfaceid": snmp_if["interfaceid"], **desired}, token)
     else:
         call_api("hostinterface.create", desired, token)
+
+
+def ensure_host_macro(token, hostid, macro, value):
+    """Создаёт/обновляет хост-макрос."""
+    r = call_api("usermacro.get", {"hostids": [hostid], "filter": {"macro": [macro]}}, token)
+    if r:
+        call_api("usermacro.update", {
+            "hostmacroid": r[0]["hostmacroid"],
+            "value": value
+        }, token)
+        return r[0]["hostmacroid"]
+    else:
+        res = call_api("usermacro.create", {
+            "hostid": hostid,
+            "macro": macro,
+            "value": value
+        }, token)
+        return res["hostmacroids"][0]
+
+
+
+def ensure_template_macro(token, templateid, macro, value):
+    """Создаёт/обновляет шаблон-макрос."""
+    r = call_api("usermacro.get", {"hostids": [templateid], "filter": {"macro": [macro]}}, token)
+    if r:
+        call_api("usermacro.update", {
+            "hostmacroid": r[0]["hostmacroid"],
+            "value": value
+        }, token)
+        return r[0]["hostmacroid"]
+    else:
+        res = call_api("usermacro.create", {
+            "hostid": templateid,
+            "macro": macro,
+            "value": value
+        }, token)
+        return res["hostmacroids"][0]
 
 
 def main():
@@ -1039,6 +1117,10 @@ def main():
     cur = {t["templateid"] for t in h.get("parentTemplates", [])}
     cur.add(snmp_tpl_id)
     set_templates_exact(token, h["hostid"], list(cur))
+
+    ensure_template_macro(token, snmp_tpl_id, "{$FORCE_ETH1_PROBLEM}", "0")
+    ensure_host_macro(token, h["hostid"], "{$IFINDEX_ETH1}", "3")
+
     print("✅  SNMPv3 успешно настроен: интерфейс + наш шаблон New SNMP привязан к webserver1")
 
     # Создаем элементы данных и триггеры для логов на хосте log-srv
