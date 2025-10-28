@@ -38,6 +38,8 @@ WAIT_INTERVAL = int(os.getenv("WAIT_INTERVAL", "5"))
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
+PREPROC_CHANGE_PER_SECOND = 10
+
 GROUP_NAME = "Linux servers"
 TEMPLATE_LINUX_AGENT = "Linux by Zabbix agent"
 TEMPLATE_SERVER_HEALTH = "Zabbix server health"
@@ -112,7 +114,7 @@ def wait_for_api(timeout=600, interval=5):
     while time.time() < deadline:
         try:
             v = call_api("apiinfo.version", {})
-            print(f"✅  Успешное подключение к Zabbix API! Версия: {v}")
+            print(f"✅  Успешное подключение к Zabbix API! Версия: {v}\n")
             return
         except Exception as e:
             last_err = e
@@ -128,7 +130,7 @@ def wait_for_login(user, password, timeout=600, interval=5):
     while time.time() < deadline:
         try:
             token = login(user, password)
-            print("✅  Авторизация Zabbix API готова.")
+            print("✅  Авторизация Zabbix API готова.\n")
             return token
         except Exception as e:
             last_err = e
@@ -148,7 +150,7 @@ def wait_for_write_ready(token, timeout=900, interval=5):
             gid = res["groupids"][0]
             # сразу же удаляем
             call_api("hostgroup.delete", [gid], token)
-            print("✅  API готов к операциям записи.")
+            print("✅  API готов к операциям записи.\n")
             return
         except Exception as e:
             last_err = e
@@ -459,7 +461,7 @@ def ensure_zabbix_server_health_only(token):
     zbx_hostid = zbx_host["hostid"]
     health_tid = get_template_ids(token, [TEMPLATE_SERVER_HEALTH])[0]
     set_templates_exact(token, zbx_hostid, [health_tid])
-    print('✅  Установлены шаблоны для хоста "Zabbix server": "Zabbix server health".')
+    print('\n✅  Установлены шаблоны для хоста "Zabbix server": "Zabbix server health".\n')
 
 
 def get_agent_interface_id(token, hostid):
@@ -793,7 +795,7 @@ def ensure_cpu_disk_triggers(token, hosts=("webserver1", "webserver2", "webserve
     Создаёт, если их нет базовые триггеры по CPU и свободному месту на корне для заданных хостов.
 
     Для каждого хоста добавляет два триггера:
-      1) Высокая загрузка CPU: среднее за 5 минут > 50% (`system.cpu.util`).
+      1) Высокая загрузка CPU: среднее за 1 минуту > 50% (`system.cpu.util`).
       2) Мало свободного места на `/`: доля свободного < 40% (`vfs.fs.size[/,pfree]`).
 
     Параметры:
@@ -833,7 +835,8 @@ def provision_plugin_items(token):
                         'nginx.check[log_size,/var/log/remote/webserver2]', VALUE_TYPE_FLOAT, "5m", "10s")
 
     print(
-        "✅  Элементы данных для контейнера 'monitoring-plugins' для проверки доступности HTTP и размера логов успешно установлены!")
+        "\n✅  Элементы данных для контейнера 'monitoring-plugins' для проверки доступности HTTP и размера логов успешно установлены!\n"
+    )
 
 
 def ensure_templategroup(token, name="Templates"):
@@ -885,16 +888,15 @@ def ensure_template_snmp(token, name="New SNMP"):
     return res["templateids"][0]
 
 
-
 def ensure_item_on_template(token, templateid, **kwargs):
     """Создаёт или обновляет item на шаблоне и возвращает его ID."""
     vt = int(kwargs.get("value_type", VALUE_TYPE_FLOAT))
     default_history = "31d"
-    default_trends  = "0" if vt in (1, 2, 4) else "90d"
+    default_trends = "0" if vt in (1, 2, 4) else "90d"
     default_timeout = "5s"
 
     history = kwargs.pop("history", default_history)
-    trends  = kwargs.pop("trends",  default_trends)
+    trends = kwargs.pop("trends", default_trends)
     timeout = kwargs.pop("timeout", default_timeout)
 
     is_snmp = int(kwargs.get("type", ITEM_TYPE_ZABBIX_AGENT)) == ITEM_TYPE_SNMP_AGENT
@@ -1007,7 +1009,7 @@ def ensure_snmp_items_and_trigger(token, templateid):
     )
 
     # Триггер
-    expr_problem  = 'last(/New SNMP/snmp.get[1.3.6.1.2.1.2.2.1.8.{$IFINDEX_ETH1}])=2 or {$FORCE_ETH1_PROBLEM}=1'
+    expr_problem = 'last(/New SNMP/snmp.get[1.3.6.1.2.1.2.2.1.8.{$IFINDEX_ETH1}])=2 or {$FORCE_ETH1_PROBLEM}=1'
     expr_recovery = 'last(/New SNMP/snmp.get[1.3.6.1.2.1.2.2.1.8.{$IFINDEX_ETH1}])=1 and {$FORCE_ETH1_PROBLEM}=0'
 
     ensure_trigger(
@@ -1036,7 +1038,7 @@ def ensure_snmpv3_interface(token, host_name):
         "hostid": hostid, "type": 2, "main": 1, "useip": 0,
         "ip": "", "dns": host_name, "port": "161",
         "details": {
-            "version": 3, "bulk": 0, "maxrepetitions": 5,
+            "version": 3, "bulk": 1, "maxrepetitions": 10,
             "securityname": SNMPV3_USER, "securitylevel": 2,  # 2=authPriv
             "authprotocol": 1,  # 1=SHA1
             "authpassphrase": SNMP_AUTH_PASS,
@@ -1069,7 +1071,6 @@ def ensure_host_macro(token, hostid, macro, value):
         return res["hostmacroids"][0]
 
 
-
 def ensure_template_macro(token, templateid, macro, value):
     """Создаёт/обновляет шаблон-макрос."""
     r = call_api("usermacro.get", {"hostids": [templateid], "filter": {"macro": [macro]}}, token)
@@ -1088,6 +1089,238 @@ def ensure_template_macro(token, templateid, macro, value):
         return res["hostmacroids"][0]
 
 
+def get_template_itemid_by_key(token, templateid, key_):
+    """Возвращает itemid шаблона по key_ или None."""
+    r = call_api("item.get", {
+        "hostids": [templateid],
+        "filter": {"key_": [key_]},
+        "output": ["itemid", "name"]
+    }, token)
+    return r[0]["itemid"] if r else None
+
+
+def ensure_template_graph(token, templateid, name, itemids):
+    """Создает/обновляет граф шаблона по двум itemid."""
+    r = call_api("graph.get", {
+        "hostids": [templateid],
+        "filter": {"name": [name]},
+        "output": ["graphid", "flags"]
+    }, token)
+
+    g = {
+        "name": name,
+        "width": "900",
+        "height": "200",
+        "graphtype": 0,
+        "gitems": [
+            {"itemid": itemids[0], "color": "0040FF", "sortorder": 0},
+            {"itemid": itemids[1], "color": "FF0000", "sortorder": 1},
+        ]
+    }
+
+    if r:
+        gid = r[0]["graphid"]
+        call_api("graph.update", {"graphid": gid, **g}, token)
+        print(f"✅  График для шаблона успешно обновлен (id={gid}): {name}")
+        return gid
+
+    res = call_api("graph.create", g, token)
+    gid = res["graphids"][0]
+    print(f"✅  График для шаблона успешно создан (id={gid}): {name}")
+    return gid
+
+
+def ensure_eth_inout_items_on_template(token, templateid):
+    """Добавляет элементы данных на шаблон SNMP для eth0/eth1."""
+
+    def macro_ref(n):  # вернёт строку вида '{$IFINDEX_ETH0}'
+        return '{$' + n + '}'
+
+    def inout(ifmacro, ifname):
+        m = macro_ref(ifmacro)
+
+        # IN
+        ensure_item_on_template(
+            token, templateid,
+            name=f"SNMP Interface {ifname} Incoming Traffic (ifHCInOctets)",
+            key_=f"snmp.get[1.3.6.1.2.1.31.1.1.1.6.{m}]",
+            snmp_oid=f"1.3.6.1.2.1.31.1.1.1.6.{m}",
+            type=ITEM_TYPE_SNMP_AGENT,
+            value_type=VALUE_TYPE_UINT,
+            delay="1m",
+            units="bps",
+            preprocessing=[
+                {"type": PREPROC_CHANGE_PER_SECOND, "params": "", "error_handler": ERRH_IGNORE, "error_handler_params": ""},
+                {"type": PREPROC_MULTIPLY, "params": "8", "error_handler": ERRH_IGNORE, "error_handler_params": ""}
+            ],
+            tags=[{"tag": "net", "value": "snmp"}]
+        )
+
+        # OUT
+        ensure_item_on_template(
+            token, templateid,
+            name=f"SNMP Interface {ifname} Outgoing Traffic (ifHCOutOctets)",
+            key_=f"snmp.get[1.3.6.1.2.1.31.1.1.1.10.{m}]",
+            snmp_oid=f"1.3.6.1.2.1.31.1.1.1.10.{m}",
+            type=ITEM_TYPE_SNMP_AGENT,
+            value_type=VALUE_TYPE_UINT,
+            delay="1m",
+            units="bps",
+            preprocessing=[
+                {"type": PREPROC_CHANGE_PER_SECOND, "params": "", "error_handler": ERRH_IGNORE, "error_handler_params": ""},
+                {"type": PREPROC_MULTIPLY, "params": "8", "error_handler": ERRH_IGNORE, "error_handler_params": ""}
+            ],
+            tags=[{"tag": "net", "value": "snmp"}]
+        )
+
+    inout("IFINDEX_ETH0", "eth0")
+    inout("IFINDEX_ETH1", "eth1")
+
+
+def ensure_eth_graphs_on_template(token, templateid):
+    """Создает/обновляет графики пропускной способности eth0/eth1."""
+
+    in0 = get_template_itemid_by_key(token, templateid, 'snmp.get[1.3.6.1.2.1.31.1.1.1.6.{$IFINDEX_ETH0}]')
+    out0 = get_template_itemid_by_key(token, templateid, 'snmp.get[1.3.6.1.2.1.31.1.1.1.10.{$IFINDEX_ETH0}]')
+    in1 = get_template_itemid_by_key(token, templateid, 'snmp.get[1.3.6.1.2.1.31.1.1.1.6.{$IFINDEX_ETH1}]')
+    out1 = get_template_itemid_by_key(token, templateid, 'snmp.get[1.3.6.1.2.1.31.1.1.1.10.{$IFINDEX_ETH1}]')
+
+    if in0 and out0:
+        ensure_template_graph(token, templateid, "Пропускная способность eth0", [in0, out0])
+    else:
+        print("⚠️ На шаблоне не найдены items для eth0 (in/out) — график пропущен.")
+
+    if in1 and out1:
+        ensure_template_graph(token, templateid, "Пропускная способность eth1", [in1, out1])
+    else:
+        print("⚠️ На шаблоне не найдены items для eth1 (in/out) — график пропущен.")
+
+
+def get_host_graph_ids_by_names(token, hostid, names):
+    """
+    Возвращает словарь {имя_графика: graphid} для заданного хоста.
+    """
+    r = call_api("graph.get", {
+        "hostids": [hostid],
+        "filter": {"name": names},
+        "output": ["graphid", "name"]
+    }, token)
+    found = {g["name"]: g["graphid"] for g in r}
+    missing = [n for n in names if n not in found]
+    if missing:
+        print(f"⚠️  На хосте id={hostid} не найдены графики: {missing}")
+    return found
+
+
+def ensure_dashboard_eth_graphs(token, host_name, dash_name=None, time_period=3600):
+    """
+    Создаёт/обновляет дашборд с графиками 'Пропускная способность eth0/eth1' для указанного хоста.
+    """
+    host = get_host_by_name(token, host_name)
+    if not host:
+        print(f"⚠️  Хост {host_name} не найден — пропускаю создание дашборда.")
+        return None
+
+    hostid = host["hostid"]
+    if not dash_name:
+        dash_name = f"Сетевой мониторинг: {host_name}"
+
+    graph_names = ["Пропускная способность eth0", "Пропускная способность eth1"]
+    gmap = get_host_graph_ids_by_names(token, hostid, graph_names)
+
+    widgets = []
+    x, y = 0, 0
+    cols = 12 if len([gid for gid in gmap.values() if gid]) >= 2 else 24
+
+    for name in graph_names:
+        gid = gmap.get(name)
+        if not gid:
+            continue
+
+        widgets.append({
+            "type": "graph-classic",
+            "name": name,
+            "width": cols,
+            "height": 8,
+            "x": x,
+            "y": y,
+            "fields": [
+                {"type": 0, "name": "graphid", "value": int(gid)},
+                {"type": 0, "name": "timePeriod", "value": int(time_period)}
+            ]
+        })
+
+        # разложим по сетке 24 колонки
+        x = 12 if x == 0 and cols == 12 else 0
+        if x == 0:
+            y += 8
+
+    if not widgets:
+        print("⚠️  Нет ни одного графика eth0/eth1 на хосте — дашборд не создан.")
+        return None
+
+    page = {"name": "Network", "widgets": widgets}
+    obj = {"name": dash_name, "auto_start": 1, "pages": [page]}
+
+    cur = call_api("dashboard.get", {"filter": {"name": [dash_name]}}, token)
+    if cur:
+        call_api("dashboard.update", {"dashboardid": cur[0]["dashboardid"], **obj}, token)
+        print(f"✅  Дашборд «{dash_name}» успешно обновлён.")
+        return cur[0]["dashboardid"]
+    else:
+        res = call_api("dashboard.create", obj, token)
+        dashid = res["dashboardids"][0]
+        print(f"\n✅  Дашборд «{dash_name}» успешно создан (id={dashid}).")
+        return dashid
+
+
+def ensure_user_can_see_groups(token, username, hostgroup_ids, permission=3):
+    """
+    Выдаёт пользователю 'username' права на указанные host groups.
+    """
+    u = call_api("user.get", {"filter": {"username": [username]}, "selectUsrgrps": "extend"}, token)
+    if not u:
+        raise RuntimeError(f'Пользователь "{username}" не найден')
+    usrgrp_ids = [g["usrgrpid"] for g in u[0].get("usrgrps", [])]
+
+    for ugid in usrgrp_ids:
+        g = call_api("usergroup.get", {
+            "usrgrpids": [ugid],
+            "selectRights": "extend",
+            "output": "extend"
+        }, token)[0]
+
+        rights_by_id = {r["id"]: int(r["permission"]) for r in g.get("rights", [])}
+        changed = False
+        for hg in map(str, hostgroup_ids):
+            if rights_by_id.get(hg, 0) < permission:
+                rights_by_id[hg] = permission
+                changed = True
+
+        if changed:
+            new_rights = [{"permission": p, "id": hid} for hid, p in rights_by_id.items()]
+            call_api("usergroup.update", {"usrgrpid": g["usrgrpid"], "rights": new_rights}, token)
+
+
+def ensure_snmp_spike_triggers_eth0(token, templateid, mb_per_min=1.0):
+    """
+    Создает триггеры-аномалии на шаблоне 'New SNMP':
+      - входящий трафик eth0 за 1 минуту > mb_per_min
+      - исходящий трафик eth0 за 1 минуту > mb_per_min
+    """
+    # 1 МБ (десятичный) в bps, усреднённый за 1 минуту
+    threshold_bps = int(mb_per_min * 8_000_000 / 60)
+
+    name_in  = "Резкий скачок входящего трафика на {HOST.NAME}"
+    name_out = "Резкий скачок исходящего трафика на {HOST.NAME}"
+
+    expr_in  = f"avg(/New SNMP/snmp.get[1.3.6.1.2.1.31.1.1.1.6.{{$IFINDEX_ETH0}}],1m)>{threshold_bps}"
+    expr_out = f"avg(/New SNMP/snmp.get[1.3.6.1.2.1.31.1.1.1.10.{{$IFINDEX_ETH0}}],1m)>{threshold_bps}"
+
+    ensure_trigger(token, name_in,  expr_in,  priority=4, manual_close=1)
+    ensure_trigger(token, name_out, expr_out, priority=4, manual_close=1)
+
+
 def main():
     """Основная функция запуска для полной настройки Zabbix."""
     wait_for_api(timeout=WAIT_TIMEOUT, interval=WAIT_INTERVAL)  # Ждём, когда API Zabbix будет доступен
@@ -1102,10 +1335,15 @@ def main():
     # Создаем хосты webserver1/2/log-srv
     proxyid = ensure_proxy(token, PROXY_NAME, mode=0)
     groupid = ensure_group(token, GROUP_NAME)
+    ensure_user_can_see_groups(token, ZBX_USER, [groupid], permission=3)
+
     for h in HOSTS:
         hid = ensure_host(token, groupid, h["host"], h["dns"], h["port"], h["templates"],
                           proxy_hostid=proxyid if h["host"].startswith("webserver") else None)
         print(f"✅  Хост создан/обновлён: {h['host']} (id={hid})")
+
+    # Для Zabbix server оставляем только шаблон "Zabbix server health"
+    ensure_zabbix_server_health_only(token)
 
     # SNMPv3
     snmp_tpl_id = ensure_template_snmp(token, "New SNMP")
@@ -1119,15 +1357,21 @@ def main():
     set_templates_exact(token, h["hostid"], list(cur))
 
     ensure_template_macro(token, snmp_tpl_id, "{$FORCE_ETH1_PROBLEM}", "0")
+
+    ensure_host_macro(token, h["hostid"], "{$IFINDEX_ETH0}", "2")
     ensure_host_macro(token, h["hostid"], "{$IFINDEX_ETH1}", "3")
 
-    print("✅  SNMPv3 успешно настроен: интерфейс + наш шаблон New SNMP привязан к webserver1")
+    ensure_eth_inout_items_on_template(token, snmp_tpl_id)
+    ensure_eth_graphs_on_template(token, snmp_tpl_id)
+    ensure_snmp_spike_triggers_eth0(token, snmp_tpl_id, mb_per_min=1.0)
+
+    # Дашборд по графикам eth0/eth1 (наследуются на хост webserver1)
+    ensure_dashboard_eth_graphs(token, "webserver1", dash_name="Сетевой мониторинг: webserver1", time_period=3600)
+
+    print("\n✅  SNMPv3 успешно настроен!\n")
 
     # Создаем элементы данных и триггеры для логов на хосте log-srv
     provision_logs_and_triggers(token)
-
-    # Для Zabbix server оставляем только шаблон "Zabbix server health"
-    ensure_zabbix_server_health_only(token)
 
     # Создаём элементы данных для контейнера с плагинами
     provision_plugin_items(token)
@@ -1151,7 +1395,7 @@ def main():
             admin["userid"],
             LOG_TRIGGER_NAMES
         )
-        print("✅  Telegram (webhook) успешно установлен!")
+        print("✅  Telegram (webhook) успешно установлен!\n")
     else:
         print("⚠️  Пропускаю настройку Telegram: не заданы TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID.")
 

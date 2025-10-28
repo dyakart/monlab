@@ -54,8 +54,8 @@ services:
     networks:
       labnet:
         ipv4_address: 172.30.0.5
-    mem_limit: 2g
-    cpus: "1.0"
+    mem_limit: 3g
+    cpus: "1.5"
 
   zabbix-server:
     image: zabbix/zabbix-server-pgsql:alpine-7.0-latest
@@ -84,8 +84,8 @@ services:
       timeout: 5s
       retries: 60
       start_period: 180s
-    mem_limit: 1500m
-    cpus: "1.0"
+    mem_limit: 3g
+    cpus: "1.5"
 
   zabbix-web:
     image: zabbix/zabbix-web-nginx-pgsql:alpine-7.0-latest
@@ -118,8 +118,8 @@ services:
       timeout: 5s
       retries: 30
       start_period: 60s
-    mem_limit: 2g
-    cpus: "1.0"
+    mem_limit: 3g
+    cpus: "1.5"
 
   zbx-settings:
     build: ./zbx-settings
@@ -145,8 +145,8 @@ services:
     networks:
       labnet:
     restart: "no"
-    mem_limit: 2g
-    cpus: "1.0"
+    mem_limit: 3g
+    cpus: "1.5"
 
   zbx-agent-plugins:
     build: ./plugins
@@ -162,8 +162,8 @@ services:
     networks:
       labnet:
         ipv4_address: 172.30.0.31
-    mem_limit: 200m
-    cpus: "0.20"
+    mem_limit: 2g
+    cpus: "1.5"
 
   zabbix-proxy:
     image: zabbix/zabbix-proxy-sqlite3:alpine-7.0-latest
@@ -184,8 +184,8 @@ services:
       labnet:
         ipv4_address: 172.30.0.9
     restart: unless-stopped
-    mem_limit: 256m
-    cpus: "0.5"
+    mem_limit: 2g
+    cpus: "1.5"
 
   # Центральный сервер логов через rsyslog (RELP+TLS)
   log-srv:

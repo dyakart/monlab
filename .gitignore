@@ -64,3 +64,6 @@ rsyslog/certs/web4
 
 # python test scripts
 gh_tree.py
+
+# md files
+monlab.md
