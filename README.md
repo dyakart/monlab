@@ -1,6 +1,6 @@
 # Monlab
 
-Учебный репозиторий для DevTestOps
+Zabbix + Spunk monitoring + Telegram alerts
 
 ---
 
